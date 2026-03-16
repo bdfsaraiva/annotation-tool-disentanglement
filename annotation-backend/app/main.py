@@ -9,7 +9,7 @@ from .database import engine, Base, SessionLocal
 from .models import User
 from .api import auth, admin, projects, message_annotation_router, project_annotation_router
 from .api.adjacency_pairs import router as adjacency_pairs_router
-from .auth import get_password_hash
+from .auth import get_password_hash, validate_password_strength
 
 # Configure logging
 logging.basicConfig(
@@ -32,6 +32,11 @@ def create_first_admin():
         admin = db.query(User).filter(User.username == settings.FIRST_ADMIN_USERNAME).first()
         if not admin:
             # Create admin user
+            try:
+                validate_password_strength(settings.FIRST_ADMIN_PASSWORD)
+            except ValueError as e:
+                logger.error(f"First admin password invalid: {e}")
+                raise
             hashed_password = get_password_hash(settings.FIRST_ADMIN_PASSWORD)
             admin = User(
                 username=settings.FIRST_ADMIN_USERNAME,

@@ -28,7 +28,7 @@ Open:
 - API docs: http://localhost:8000/docs
 
 Default admin:
-- admin / admin
+- Set `FIRST_ADMIN_USERNAME` and `FIRST_ADMIN_PASSWORD` in `.env`
 
 ## Local development
 Backend:

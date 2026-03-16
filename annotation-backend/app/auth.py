@@ -27,6 +27,15 @@ def get_password_hash(password: str) -> str:
     return pwd_context.hash(password)
 
 
+def validate_password_strength(password: str) -> None:
+    if len(password) < settings.PASSWORD_MIN_LENGTH:
+        raise ValueError(f"Password must be at least {settings.PASSWORD_MIN_LENGTH} characters")
+    if settings.PASSWORD_REQUIRE_LETTER and not any(ch.isalpha() for ch in password):
+        raise ValueError("Password must contain at least one letter")
+    if settings.PASSWORD_REQUIRE_DIGIT and not any(ch.isdigit() for ch in password):
+        raise ValueError("Password must contain at least one digit")
+
+
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     to_encode = data.copy()
     if expires_delta:

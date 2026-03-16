@@ -6,16 +6,19 @@ import csv
 import io
 
 from ..database import get_db
+from ..config import get_settings
 from ..auth import get_current_user
 from ..dependencies import verify_project_access
 from ..models import User, AdjacencyPair, ChatMessage, ChatRoom, Project
 from ..schemas import AdjacencyPair as AdjacencyPairSchema, AdjacencyPairCreate
 from .. import crud
+from ..utils.upload_limits import enforce_max_upload_size, enforce_max_rows
 
 router = APIRouter(
     prefix="/projects/{project_id}/chat-rooms/{room_id}/adjacency-pairs",
     tags=["adjacency pairs"]
 )
+settings = get_settings()
 
 def _serialize_pair(pair: AdjacencyPair, annotator_username: str) -> AdjacencyPairSchema:
     return AdjacencyPairSchema(
@@ -198,6 +201,7 @@ def import_adjacency_pairs(
         )
 
     content = file.file.read()
+    enforce_max_upload_size(len(content), settings.MAX_UPLOAD_MB, "Adjacency pairs upload")
     try:
         text = content.decode("utf-8")
     except UnicodeDecodeError:
@@ -224,9 +228,12 @@ def import_adjacency_pairs(
     now = datetime.utcnow()
 
     reader = csv.reader(io.StringIO(text))
+    parsed_rows = 0
     for line_number, row in enumerate(reader, start=1):
         if not row or all(not cell.strip() for cell in row):
             continue
+        parsed_rows += 1
+        enforce_max_rows(parsed_rows, settings.MAX_IMPORT_ROWS, "Adjacency pairs")
         if len(row) < 3:
             errors.append(f"Line {line_number}: expected 3 columns (turnA,turnB,relation_type)")
             skipped_count += 1

@@ -360,7 +360,7 @@ python import_excel.py --folder ../uploads/Archive
    Annotators: bruno, carla
 
 🎯 READY FOR TESTING:
-- Login admin: admin / admin
+- Login admin: set in .env
 - Login anotadores: [nome] / password
 - URL: http://localhost:3721
 - Métricas IAA disponíveis para análise

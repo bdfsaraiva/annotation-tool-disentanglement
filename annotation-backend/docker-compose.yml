@@ -9,10 +9,11 @@ services:
       - ./app:/app/app
       - ./data:/app/data
     environment:
-      - SQLALCHEMY_DATABASE_URL=sqlite:///app/data/app.db
+      - DATABASE_URL=sqlite:///./data/app.db
       - FIRST_ADMIN_USERNAME=admin
-      - FIRST_ADMIN_PASSWORD=admin
-      - SECRET_KEY=your-secret-key-here
+      - FIRST_ADMIN_PASSWORD=change-me-strong-123
+      - SECRET_KEY=change-me-min-32-chars
+      - CORS_ORIGINS=["http://localhost:3721"]
       - ALGORITHM=HS256
       - ACCESS_TOKEN_EXPIRE_MINUTES=30
       - REFRESH_TOKEN_EXPIRE_DAYS=7

@@ -26,8 +26,19 @@ Create a .env in the repository root or in annotation-backend (for local dev):
 DATABASE_URL=sqlite:///./data/app.db
 SECRET_KEY=change-me-min-32-chars
 FIRST_ADMIN_USERNAME=admin
-FIRST_ADMIN_PASSWORD=admin
+FIRST_ADMIN_PASSWORD=change-me-strong-123
 CORS_ORIGINS=["http://localhost:3721"]
+```
+
+Optional security and limits:
+```env
+PASSWORD_MIN_LENGTH=10
+PASSWORD_REQUIRE_DIGIT=true
+PASSWORD_REQUIRE_LETTER=true
+AUTH_RATE_LIMIT_REQUESTS=10
+AUTH_RATE_LIMIT_WINDOW_SECONDS=60
+MAX_UPLOAD_MB=10
+MAX_IMPORT_ROWS=50000
 ```
 
 ## Run the server

@@ -9,13 +9,16 @@ from datetime import datetime
 
 from .. import crud, models, schemas
 from ..dependencies import get_db
-from ..auth import get_current_admin_user, get_password_hash
+from ..auth import get_current_admin_user, get_password_hash, validate_password_strength
+from ..config import get_settings
 from ..utils.csv_utils import import_chat_messages, validate_csv_format, import_annotations_from_csv, validate_annotations_csv_format
+from ..utils.filename_utils import sanitize_filename
+from ..utils.upload_limits import enforce_max_upload_size, enforce_max_rows
 from fastapi.responses import Response, JSONResponse
-import io
 import zipfile
 
 router = APIRouter()
+settings = get_settings()
 
 @router.get("/users", response_model=List[schemas.User])
 async def list_users(
@@ -41,6 +44,10 @@ async def create_user(
         )
     
     # Create user with hashed password
+    try:
+        validate_password_strength(user_data.password)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     hashed_password = get_password_hash(user_data.password)
     new_user = crud.create_user(db, user_data, hashed_password)
     return new_user
@@ -70,6 +77,10 @@ async def update_user(
 
     hashed_password = None
     if updates.password:
+        try:
+            validate_password_strength(updates.password)
+        except ValueError as e:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
         hashed_password = get_password_hash(updates.password)
 
     updated_user = crud.update_user(db, user, updates, hashed_password)
@@ -197,11 +208,12 @@ async def create_chat_room_and_import_csv(
         )
 
     # Save uploaded file temporarily
-    safe_filename = os.path.basename(file.filename)
+    safe_filename = sanitize_filename(os.path.basename(file.filename))
     temp_file_path = f"uploads/{safe_filename}"
     new_chat_room = None
     try:
         contents = await file.read()
+        enforce_max_upload_size(len(contents), settings.MAX_UPLOAD_MB, "CSV upload")
         os.makedirs("uploads", exist_ok=True)
         with open(temp_file_path, "wb") as f:
             f.write(contents)
@@ -211,6 +223,7 @@ async def create_chat_room_and_import_csv(
         
         # Import messages using our simple utility
         messages = import_chat_messages(temp_file_path)
+        enforce_max_rows(len(messages), settings.MAX_IMPORT_ROWS, "CSV messages")
         existing_turns = {m["turn_id"] for m in messages if m.get("turn_id")}
 
         # Create chat room using filename (remove extension)
@@ -271,6 +284,8 @@ async def create_chat_room_and_import_csv(
             )
         )
         
+    except HTTPException:
+        raise
     except Exception as e:
         db.rollback()
         if new_chat_room is not None:
@@ -407,9 +422,11 @@ async def import_annotations_for_chat_room(
         )
     
     # Save uploaded file temporarily
-    temp_file_path = f"uploads/annotations_{file.filename}"
+    safe_filename = sanitize_filename(os.path.basename(file.filename))
+    temp_file_path = f"uploads/annotations_{safe_filename}"
     try:
         contents = await file.read()
+        enforce_max_upload_size(len(contents), settings.MAX_UPLOAD_MB, "CSV upload")
         os.makedirs("uploads", exist_ok=True)
         with open(temp_file_path, "wb") as f:
             f.write(contents)
@@ -419,6 +436,7 @@ async def import_annotations_for_chat_room(
         
         # Import annotations from CSV
         annotations_data = import_annotations_from_csv(temp_file_path)
+        enforce_max_rows(len(annotations_data), settings.MAX_IMPORT_ROWS, "Annotations")
         
         # Import annotations to database with attribution
         imported_count, skipped_count, errors = crud.import_annotations_for_chat_room(
@@ -439,6 +457,8 @@ async def import_annotations_for_chat_room(
             errors=errors
         )
         
+    except HTTPException:
+        raise
     except Exception as e:
         db.rollback()
         raise HTTPException(
@@ -538,9 +558,11 @@ async def import_batch_annotations(
         )
     
     # Save uploaded file temporarily
-    temp_file_path = f"uploads/batch_annotations_{file.filename}"
+    safe_filename = sanitize_filename(os.path.basename(file.filename))
+    temp_file_path = f"uploads/batch_annotations_{safe_filename}"
     try:
         contents = await file.read()
+        enforce_max_upload_size(len(contents), settings.MAX_UPLOAD_MB, "JSON upload")
         os.makedirs("uploads", exist_ok=True)
         with open(temp_file_path, "wb") as f:
             f.write(contents)
@@ -563,6 +585,9 @@ async def import_batch_annotations(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Invalid batch annotation format: {str(e)}"
             )
+
+        total_annotations = sum(len(a.annotations) for a in batch_data.annotators)
+        enforce_max_rows(total_annotations, settings.MAX_IMPORT_ROWS, "Batch annotations")
         
         # Validate that the batch metadata matches the requested chat room
         if batch_data.batch_metadata.chat_room_id != chat_room_id:
@@ -670,7 +695,7 @@ async def export_chat_room_data(
     
     # Extract metadata for filename generation
     metadata = export_data["export_metadata"]
-    chat_room_name = metadata["chat_room_name"].replace(" ", "_").replace("-", "_")
+    chat_room_name = sanitize_filename(metadata["chat_room_name"])
     completion_status = metadata["completion_status"]
     completion_percentage = metadata["completion_percentage"]
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -723,7 +748,7 @@ async def export_adjacency_pairs(
     FromMessage = aliased(models.ChatMessage)
     ToMessage = aliased(models.ChatMessage)
 
-    safe_room_name = chat_room.name.replace(" ", "-")
+    safe_room_name = sanitize_filename(chat_room.name)
     if annotator_id is not None:
         query = (
             db.query(models.AdjacencyPair, FromMessage.turn_id, ToMessage.turn_id)
@@ -738,7 +763,7 @@ async def export_adjacency_pairs(
         lines = [f"{from_turn},{to_turn},{pair.relation_type}" for pair, from_turn, to_turn in pairs]
         content = "\n".join(lines)
 
-        safe_annotator = (annotator_username or f"user_{annotator_id}").replace(" ", "-")
+        safe_annotator = sanitize_filename(annotator_username or f"user_{annotator_id}")
         filename = f"{safe_room_name}-{safe_annotator}.txt"
         return Response(
             content=content,
@@ -776,7 +801,7 @@ async def export_adjacency_pairs(
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
         for user in assigned_users:
-            safe_annotator = (user.username or f"user_{user.id}").replace(" ", "-")
+            safe_annotator = sanitize_filename(user.username or f"user_{user.id}")
             fname = f"{safe_room_name}-{safe_annotator}.txt"
             lines = grouped_by_user.get(user.id, [])
             zf.writestr(fname, "\n".join(lines))

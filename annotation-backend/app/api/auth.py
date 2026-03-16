@@ -1,8 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from datetime import timedelta
-from typing import Optional
 
 from ..database import get_db
 from ..models import User
@@ -14,11 +13,17 @@ from ..auth import (
     get_password_hash,
     get_current_user,
     refresh_access_token,
+    validate_password_strength,
 )
 from ..config import get_settings
+from ..utils.rate_limit import RateLimiter, enforce_rate_limit
 
 settings = get_settings()
 router = APIRouter()
+auth_rate_limiter = RateLimiter(
+    settings.AUTH_RATE_LIMIT_REQUESTS,
+    settings.AUTH_RATE_LIMIT_WINDOW_SECONDS
+)
 
 class TokenResponse(Token):
     refresh_token: str
@@ -27,8 +32,10 @@ class TokenResponse(Token):
 @router.post("/token", response_model=TokenResponse)
 async def login(
     form_data: OAuth2PasswordRequestForm = Depends(),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    request: Request
 ):
+    enforce_rate_limit(request, auth_rate_limiter, scope="auth")
     # Find user by username
     user = db.query(User).filter(User.username == form_data.username).first()
     
@@ -63,8 +70,10 @@ async def login(
 @router.post("/refresh", response_model=TokenResponse)
 async def refresh_token(
     payload: RefreshTokenRequest,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    request: Request
 ):
+    enforce_rate_limit(request, auth_rate_limiter, scope="auth")
     token_data = await refresh_access_token(refresh_token=payload.refresh_token, db=db)
     # Create new access token
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
@@ -101,6 +110,10 @@ async def register_user(
         )
     
     # Create new user
+    try:
+        validate_password_strength(user_data.password)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     hashed_password = get_password_hash(user_data.password)
     new_user = User(
         username=user_data.username,
