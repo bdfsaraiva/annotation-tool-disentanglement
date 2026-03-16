@@ -1,42 +1,37 @@
 # Annotation Backend System
 
-A flexible backend system for text annotation tasks, with chat disentanglement as the first supported use case.
+Backend for text annotation tasks, including chat disentanglement and adjacency pairs.
 
 ## Features
-
 - User authentication and authorization
-- Project management
-- CSV data import
-- Chat message thread annotation
-- Role-based access control (Admin/Annotator)
+- Project and chat room management
+- CSV import for chat rooms
+- Chat disentanglement annotations
+- Adjacency pairs annotations
+- IAA analysis for disentanglement
 - RESTful API with FastAPI
-- Async database operations with SQLAlchemy
-- SQLite database (can be easily switched to PostgreSQL)
+- SQLite database (default)
 
 ## Setup
+```bash
+cd annotation-backend
+python -m venv .venv
+.\.venv\Scripts\activate
+pip install -r requirements.txt
+```
 
-1. Create a virtual environment:
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   ```
+## Configuration
+Create a .env in the repository root or in annotation-backend (for local dev):
+```env
+DATABASE_URL=sqlite:///./data/app.db
+SECRET_KEY=change-me-min-32-chars
+FIRST_ADMIN_USERNAME=admin
+FIRST_ADMIN_PASSWORD=admin
+SERVER_IP=localhost
+FRONTEND_PORT=3721
+```
 
-2. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-3. Create a `.env` file with your configuration:
-   ```env
-   DATABASE_URL=sqlite+aiosqlite:///./annotation.db
-   SECRET_KEY=your-secret-key-here
-   FIRST_ADMIN_USERNAME=admin
-   FIRST_ADMIN_PASSWORD=change-this-password
-   ```
-
-## Running the Server
-
-Start the development server:
+## Run the server
 ```bash
 uvicorn app.main:app --reload
 ```
@@ -44,76 +39,46 @@ uvicorn app.main:app --reload
 The API will be available at:
 - API: http://localhost:8000
 - Swagger UI: http://localhost:8000/docs
-- ReDoc: http://localhost:8000/redoc
 
-## API Documentation
+## Core endpoints
+Authentication:
+- POST /auth/token
+- POST /auth/refresh
+- GET /auth/me
 
-### Authentication
+Admin:
+- GET /admin/users
+- POST /admin/users
+- DELETE /admin/users/{user_id}
+- GET /admin/projects
+- POST /admin/projects
+- PUT /admin/projects/{project_id}
+- DELETE /admin/projects/{project_id}
 
-- `POST /auth/token` - Login and get access token
-- `POST /auth/register` - Register new user
-- `GET /auth/me` - Get current user info
+Projects:
+- GET /projects
+- GET /projects/{project_id}
+- GET /projects/{project_id}/users
+- POST /projects/{project_id}/assign/{user_id}
+- DELETE /projects/{project_id}/assign/{user_id}
+- GET /projects/{project_id}/chat-rooms
+- GET /projects/{project_id}/chat-rooms/{room_id}
 
-### Admin Endpoints
+Chat rooms and annotations:
+- GET /projects/{project_id}/chat-rooms/{room_id}/messages
+- GET /projects/{project_id}/chat-rooms/{room_id}/annotations
+- POST /projects/{project_id}/messages/{message_id}/annotations
+- DELETE /projects/{project_id}/messages/{message_id}/annotations/{annotation_id}
 
-- `GET /admin/users` - List all users
-- `POST /admin/users` - Create new user
-- `DELETE /admin/users/{user_id}` - Delete user
-- `GET /admin/projects` - List all projects
-- `POST /admin/projects` - Create new project
-- `DELETE /admin/projects/{project_id}` - Delete project
+Adjacency pairs:
+- GET /projects/{project_id}/chat-rooms/{room_id}/adjacency-pairs
+- POST /projects/{project_id}/chat-rooms/{room_id}/adjacency-pairs
+- DELETE /projects/{project_id}/chat-rooms/{room_id}/adjacency-pairs/{pair_id}
+- POST /projects/{project_id}/chat-rooms/{room_id}/adjacency-pairs/import
 
-### Project Endpoints
-
-- `GET /projects` - List user's projects
-- `GET /projects/{project_id}` - Get project details
-- `POST /projects/{project_id}/assign/{user_id}` - Assign user to project
-- `DELETE /projects/{project_id}/assign/{user_id}` - Remove user from project
-
-### Chat Disentanglement Endpoints
-
-- `GET /chat-disentanglement/containers/{container_id}/messages` - List messages
-- `POST /chat-disentanglement/messages/{message_id}/thread` - Annotate thread
-- `GET /chat-disentanglement/containers/{container_id}/threads` - Get thread annotations
-- `POST /chat-disentanglement/import` - Import chat data from CSV
-
-## Data Import Format
-
-The CSV import expects the following columns (mapped through the API):
-- `turn_id` - Unique identifier for each message
-- `user_id` - User who sent the message
-- `turn_text` - The message content
-- Optional: `timestamp`, `reply_to_turn`
-
-## Development
-
-### Project Structure
-
-```
-annotation-backend/
-├── app/
-│   ├── api/
-│   │   ├── admin.py
-│   │   ├── auth.py
-│   │   ├── projects.py
-│   │   └── chat_disentanglement.py
-│   ├── models.py
-│   ├── schemas.py
-│   ├── database.py
-│   ├── auth.py
-│   └── main.py
-├── tests/
-├── requirements.txt
-└── README.md
-```
-
-### Adding New Features
-
-1. Add new models in `models.py`
-2. Create corresponding schemas in `schemas.py`
-3. Implement API endpoints in appropriate router
-4. Update documentation
-
-## License
-
-MIT License 
+## Data import format (CSV)
+Required columns:
+- turn_id
+- user_id
+- turn_text
+- reply_to_turn

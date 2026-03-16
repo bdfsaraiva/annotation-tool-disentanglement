@@ -37,7 +37,10 @@ const MessageBubble = ({
   onMessageHoverEnd,
   adjacencyPairsOutgoing = [],
   adjacencyPairsIncoming = [],
-  onPairDelete
+  onPairDelete,
+  showReadToggle = false,
+  isRead = false,
+  onReadToggle
 }) => {
   const [expanded, setExpanded] = useState(false);
   const [showThreadInput, setShowThreadInput] = useState(false);
@@ -220,11 +223,27 @@ const MessageBubble = ({
             onMouseLeave={() => onReplyHoverEnd && onReplyHoverEnd()}
 //            title="Hover to highlight reply chain"
           >
-            <span className="reply-to-label">↳</span>
+            <span className="reply-to-label">↪</span>
             <span className="reply-to-value">{getNumericTurnId(replyToValue)}</span>
           </span>
         )}
         <div className="message-header-actions">
+          {showReadToggle && (
+            <label
+              className="read-flag"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <input
+                type="checkbox"
+                checked={isRead}
+                onChange={(e) => {
+                  e.stopPropagation();
+                  if (onReadToggle) onReadToggle();
+                }}
+              />
+              <span>Read</span>
+            </label>
+          )}
           {/* Thread indicator for annotated messages */}
           {threadColor && currentUserAnnotation && (
             <span 
@@ -319,3 +338,4 @@ const MessageBubble = ({
 };
 
 export default MessageBubble;
+

@@ -140,6 +140,13 @@
   font-weight: 500;
 }
 
+.room-action {
+  display: flex;
+  justify-content: start;
+  align-items: center;
+  gap: 0.5rem;
+}
+
 .annotate-button {
   background: var(--primary-color);
   color: white;
@@ -159,6 +166,60 @@
   background: var(--primary-color-dark);
   transform: translateY(-1px);
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.import-annotation-button {
+  background: #f59e0b;
+  border: 1px solid #d97706;
+  color: #1f2937;
+  margin-left: 0.5rem;
+}
+
+.import-annotation-button:hover {
+  background: #d97706;
+  color: #ffffff;
+}
+
+.adjacency-import-modal {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.adjacency-import-choice {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.adjacency-import-choice-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.action-button.danger {
+  background: #dc2626;
+  border-color: #b91c1c;
+  color: #ffffff;
+}
+
+.import-message {
+  margin: 0.75rem 0;
+  padding: 0.6rem 0.8rem;
+  border-radius: var(--border-radius);
+  background: #e0f2fe;
+  color: #0c4a6e;
+  font-weight: 600;
+}
+
+.import-error {
+  margin: 0.75rem 0;
+  padding: 0.6rem 0.8rem;
+  border-radius: var(--border-radius);
+  background: #fee2e2;
+  color: #991b1b;
+  font-weight: 600;
 }
 
 .empty-state {

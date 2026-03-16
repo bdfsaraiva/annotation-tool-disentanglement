@@ -58,6 +58,10 @@ class ChatRoomBase(BaseModel):
 class ChatRoomCreate(ChatRoomBase):
     project_id: int
 
+class ChatRoomUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1)
+    description: Optional[str] = None
+
 class ChatRoom(ChatRoomBase):
     id: int
     project_id: int

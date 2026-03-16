@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useCallback, useRef } from 'react';
+﻿import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { projects as projectsApi, annotations as annotationsApi, adjacencyPairs as adjacencyPairsApi, auth } from '../utils/api';
 import MessageBubble from './MessageBubble';
@@ -61,6 +61,7 @@ const AnnotatorChatRoomPage = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isCompleted, setIsCompleted] = useState(false);
   const [isCompletionSaving, setIsCompletionSaving] = useState(false);
+  const [readStatus, setReadStatus] = useState({});
   
   // New state for enhanced functionality
   const [highlightedUserId, setHighlightedUserId] = useState(null);
@@ -80,6 +81,7 @@ const AnnotatorChatRoomPage = () => {
   const [hoveredRelationId, setHoveredRelationId] = useState(null);
   const [hoveredMessageId, setHoveredMessageId] = useState(null);
   const [replyHoverIds, setReplyHoverIds] = useState(null);
+  const [confirmMarkAll, setConfirmMarkAll] = useState({ open: false, nextValue: false });
   const [contextMenu, setContextMenu] = useState({
     visible: false,
     x: 0,
@@ -95,6 +97,10 @@ const AnnotatorChatRoomPage = () => {
     messagesPerThread: {},
     annotatorsPerThread: {}
   });
+
+  const getReadStorageKey = useCallback((userId) => {
+    return `adjpairs-read:${projectId}:${roomId}:${userId}`;
+  }, [projectId, roomId]);
 
   // Scroll to top function
   const scrollToTop = () => {
@@ -148,7 +154,7 @@ const AnnotatorChatRoomPage = () => {
         };
       }
       newThreadDetails[annotation.thread_id].messages.push(annotation.message_id);
-        newThreadDetails[annotation.thread_id].annotators.add(annotation.annotator_username);
+      newThreadDetails[annotation.thread_id].annotators.add(annotation.annotator_username);
       newThreadDetails[annotation.thread_id].annotations.push(annotation);
     });
 
@@ -205,14 +211,14 @@ const AnnotatorChatRoomPage = () => {
     });
   }, []);
 
-  const abbreviateRelationType = (relationType) => {
+  const abbreviateRelationType = useCallback((relationType) => {
     if (!relationType) return '';
     const words = relationType.split(/[\s_-]+/).filter(Boolean);
     if (words.length === 1) {
       return words[0].slice(0, 3).toUpperCase();
     }
     return words.map((word) => word[0]).join('').slice(0, 4).toUpperCase();
-  };
+  }, []);
 
   const updateMessagePositions = useCallback(() => {
     const container = messagesContentRef.current;
@@ -331,6 +337,63 @@ const AnnotatorChatRoomPage = () => {
     requestPositionUpdate();
   }, [showInstructions, annotationMode, requestPositionUpdate]);
 
+  const syncCompletionStatus = useCallback(async (nextValue) => {
+    setIsCompletionSaving(true);
+    try {
+      await projectsApi.updateChatRoomCompletion(projectId, roomId, nextValue);
+      setIsCompleted(nextValue);
+    } catch (err) {
+      console.error('Error updating completion status:', err);
+      setError(parseApiError(err));
+    } finally {
+      setIsCompletionSaving(false);
+    }
+  }, [projectId, roomId]);
+
+  useEffect(() => {
+    if (annotationMode !== 'adjacency_pairs' || !currentUser) return;
+    const key = getReadStorageKey(currentUser.id);
+    const storedRaw = window.localStorage.getItem(key);
+    let nextStatus = {};
+    let hasStored = false;
+    if (storedRaw) {
+      try {
+        const parsed = JSON.parse(storedRaw);
+        if (parsed && typeof parsed === 'object') {
+          nextStatus = parsed;
+          hasStored = true;
+        }
+      } catch (err) {
+        console.warn('Failed to parse read status storage:', err);
+      }
+    }
+    if (!hasStored && isCompleted && messages.length > 0) {
+      const allRead = {};
+      messages.forEach((msg) => {
+        allRead[msg.id] = true;
+      });
+      nextStatus = allRead;
+    }
+    setReadStatus(nextStatus);
+  }, [annotationMode, currentUser, getReadStorageKey, isCompleted, messages]);
+
+  useEffect(() => {
+    if (annotationMode !== 'adjacency_pairs' || !currentUser) return;
+    const key = getReadStorageKey(currentUser.id);
+    window.localStorage.setItem(key, JSON.stringify(readStatus));
+  }, [annotationMode, currentUser, getReadStorageKey, readStatus]);
+
+  const totalMessagesCount = messages.length;
+  const readCount = messages.reduce((acc, msg) => acc + (readStatus[msg.id] ? 1 : 0), 0);
+  const allRead = annotationMode === 'adjacency_pairs' && totalMessagesCount > 0 && readCount === totalMessagesCount;
+
+  useEffect(() => {
+    if (annotationMode !== 'adjacency_pairs') return;
+    if (totalMessagesCount === 0) return;
+    if (allRead === isCompleted) return;
+    syncCompletionStatus(allRead);
+  }, [annotationMode, totalMessagesCount, allRead, isCompleted, syncCompletionStatus]);
+
   useEffect(() => {
     const handleResize = () => requestPositionUpdate();
     window.addEventListener('resize', handleResize);
@@ -388,6 +451,7 @@ const AnnotatorChatRoomPage = () => {
     setAdjacencyPairs(pairs);
     return pairs;
   }, [projectId, roomId]);
+
 
   const handlePairDragStart = (messageId) => {
     setDragSourceMessageId(messageId);
@@ -487,20 +551,6 @@ const AnnotatorChatRoomPage = () => {
     }
   };
 
-  const handleCompletionToggle = async (event) => {
-    const nextValue = event.target.checked;
-    setIsCompletionSaving(true);
-    try {
-      await projectsApi.updateChatRoomCompletion(projectId, roomId, nextValue);
-      setIsCompleted(nextValue);
-    } catch (err) {
-      console.error('Error updating completion status:', err);
-      setError(parseApiError(err));
-    } finally {
-      setIsCompletionSaving(false);
-    }
-  };
-
   const handleDeleteAdjacencyPair = async (pairId) => {
     setIsSubmitting(true);
     try {
@@ -596,96 +646,137 @@ const AnnotatorChatRoomPage = () => {
     }
   };
 
-  if (loading) return <div className="loading">Loading chat room...</div>;
+  const handleReadToggle = useCallback((messageId) => {
+    setReadStatus((prev) => {
+      const next = { ...prev, [messageId]: !prev[messageId] };
+      return next;
+    });
+  }, []);
 
+  const handleMarkAllAsRead = () => {
+    if (messages.length === 0) return;
+    setConfirmMarkAll({ open: true, nextValue: !allRead });
+  };
 
-  const adjacencyLines = adjacencyPairs.map((pair) => {
-    const fromY = messagePositions[String(pair.from_message_id)];
-    const toY = messagePositions[String(pair.to_message_id)];
-    if (fromY == null || toY == null) return null;
-    const color = relationTypeColors[pair.relation_type] || '#6B7280';
-    const label = abbreviateRelationType(pair.relation_type);
-    return {
-      id: pair.id,
-      fromId: pair.from_message_id,
-      toId: pair.to_message_id,
-      fromY,
-      toY,
-      color,
-      label
-    };
-  }).filter(Boolean);
+  const applyMarkAll = useCallback(() => {
+    const nextStatus = {};
+    messages.forEach((msg) => {
+      nextStatus[msg.id] = confirmMarkAll.nextValue;
+    });
+    setReadStatus(nextStatus);
+    setConfirmMarkAll({ open: false, nextValue: false });
+  }, [messages, confirmMarkAll.nextValue]);
 
-  const laneGap = 14;
-  const laneBase = 70;
-  const sortedLines = [...adjacencyLines].sort((a, b) => {
-    const aStart = Math.min(a.fromY, a.toY);
-    const bStart = Math.min(b.fromY, b.toY);
-    if (aStart !== bStart) return aStart - bStart;
-    const aEnd = Math.max(a.fromY, a.toY);
-    const bEnd = Math.max(b.fromY, b.toY);
-    return aEnd - bEnd;
-  });
-  const laneEnds = [];
-  const lineWithLanes = sortedLines.map((line) => {
-    const start = Math.min(line.fromY, line.toY);
-    const end = Math.max(line.fromY, line.toY);
-    let laneIndex = 0;
-    while (laneIndex < laneEnds.length && start <= laneEnds[laneIndex]) {
-      laneIndex += 1;
-    }
-    if (laneIndex === laneEnds.length) {
-      laneEnds.push(end);
-    } else {
-      laneEnds[laneIndex] = end;
-    }
-    return { ...line, lane: laneIndex };
-  });
-  const maxLane = laneEnds.length > 0 ? laneEnds.length - 1 : 0;
-  const relationsWidth = laneBase + laneGap * (maxLane + 1);
+  const adjacencyLines = useMemo(() => {
+    return adjacencyPairs.map((pair) => {
+      const fromY = messagePositions[String(pair.from_message_id)];
+      const toY = messagePositions[String(pair.to_message_id)];
+      if (fromY == null || toY == null) return null;
+      const color = relationTypeColors[pair.relation_type] || '#6B7280';
+      const label = abbreviateRelationType(pair.relation_type);
+      return {
+        id: pair.id,
+        fromId: pair.from_message_id,
+        toId: pair.to_message_id,
+        fromY,
+        toY,
+        color,
+        label
+      };
+    }).filter(Boolean);
+  }, [adjacencyPairs, messagePositions, relationTypeColors, abbreviateRelationType]);
 
-    const messageIndexMap = {};
-  messages.forEach((msg, idx) => {
-    messageIndexMap[msg.id] = idx;
-  });
+  const { lineWithLanes, relationsWidth, laneGap } = useMemo(() => {
+    const laneGapValue = 14;
+    const laneBase = 70;
+    const sortedLines = [...adjacencyLines].sort((a, b) => {
+      const aStart = Math.min(a.fromY, a.toY);
+      const bStart = Math.min(b.fromY, b.toY);
+      if (aStart !== bStart) return aStart - bStart;
+      const aEnd = Math.max(a.fromY, a.toY);
+      const bEnd = Math.max(b.fromY, b.toY);
+      return aEnd - bEnd;
+    });
+    const laneEnds = [];
+    const linesWithLanes = sortedLines.map((line) => {
+      const start = Math.min(line.fromY, line.toY);
+      const end = Math.max(line.fromY, line.toY);
+      let laneIndex = 0;
+      while (laneIndex < laneEnds.length && start <= laneEnds[laneIndex]) {
+        laneIndex += 1;
+      }
+      if (laneIndex === laneEnds.length) {
+        laneEnds.push(end);
+      } else {
+        laneEnds[laneIndex] = end;
+      }
+      return { ...line, lane: laneIndex };
+    });
+    const maxLane = laneEnds.length > 0 ? laneEnds.length - 1 : 0;
+    const width = laneBase + laneGapValue * (maxLane + 1);
+    return { lineWithLanes: linesWithLanes, relationsWidth: width, laneGap: laneGapValue };
+  }, [adjacencyLines]);
 
-  const isBackwardLinkAllowed = (fromId, toId) => {
+  const messageIndexMap = useMemo(() => {
+    const map = {};
+    messages.forEach((msg, idx) => {
+      map[msg.id] = idx;
+    });
+    return map;
+  }, [messages]);
+
+  const isBackwardLinkAllowed = useCallback((fromId, toId) => {
     if (fromId == null || toId == null) return true;
     const fromIndex = messageIndexMap[fromId];
     const toIndex = messageIndexMap[toId];
     if (fromIndex == null || toIndex == null) return true;
     return toIndex < fromIndex;
-  };  const dragPreviewLine = (() => {
+  }, [messageIndexMap]);
+
+  const dragPreviewLine = useMemo(() => {
     if (!dragSourceMessageId || !dragHoverMessageId || dragSourceMessageId === dragHoverMessageId) return null;
     const fromY = messagePositions[String(dragSourceMessageId)];
     const toY = messagePositions[String(dragHoverMessageId)];
     if (fromY == null || toY == null) return null;
     return { fromY, toY, x: relationsWidth - 12 };
-  })();
+  }, [dragSourceMessageId, dragHoverMessageId, messagePositions, relationsWidth]);
 
-  const selectedRelation = adjacencyPairs.find((pair) => pair.id === selectedRelationId) || null;
-  const hoveredRelation = adjacencyPairs.find((pair) => pair.id === hoveredRelationId) || null;
+  const selectedRelation = useMemo(
+    () => adjacencyPairs.find((pair) => pair.id === selectedRelationId) || null,
+    [adjacencyPairs, selectedRelationId]
+  );
+  const hoveredRelation = useMemo(
+    () => adjacencyPairs.find((pair) => pair.id === hoveredRelationId) || null,
+    [adjacencyPairs, hoveredRelationId]
+  );
   const activeRelation = selectedRelation || hoveredRelation;
-  const hoveredRelations = hoveredMessageId
-    ? adjacencyPairs.filter(
-        (pair) =>
-          pair.from_message_id === hoveredMessageId || pair.to_message_id === hoveredMessageId
-      )
-    : [];
-  const hoveredRelationIds = new Set(hoveredRelations.map((pair) => pair.id));
-  const hoveredLinkedIds = hoveredRelations.reduce((acc, pair) => {
-    acc.add(String(pair.from_message_id));
-    acc.add(String(pair.to_message_id));
-    return acc;
-  }, new Set());
+  const hoveredRelations = useMemo(() => {
+    return hoveredMessageId
+      ? adjacencyPairs.filter(
+          (pair) =>
+            pair.from_message_id === hoveredMessageId || pair.to_message_id === hoveredMessageId
+        )
+      : [];
+  }, [adjacencyPairs, hoveredMessageId]);
+  const hoveredRelationIds = useMemo(() => new Set(hoveredRelations.map((pair) => pair.id)), [hoveredRelations]);
+  const hoveredLinkedIds = useMemo(() => {
+    return hoveredRelations.reduce((acc, pair) => {
+      acc.add(String(pair.from_message_id));
+      acc.add(String(pair.to_message_id));
+      return acc;
+    }, new Set());
+  }, [hoveredRelations]);
   const shouldFocusRelations = hoveredMessageId && hoveredRelationIds.size > 0;
 
-  const activeLinkedIds = shouldFocusRelations
-    ? hoveredLinkedIds
-    : activeRelation
-      ? new Set([String(activeRelation.from_message_id), String(activeRelation.to_message_id)])
-      : null;
+  const activeLinkedIds = useMemo(() => {
+    if (shouldFocusRelations) return hoveredLinkedIds;
+    if (activeRelation) {
+      return new Set([String(activeRelation.from_message_id), String(activeRelation.to_message_id)]);
+    }
+    return null;
+  }, [shouldFocusRelations, hoveredLinkedIds, activeRelation]);
 
+  if (loading) return <div className="loading">Loading chat room...</div>;
   return (
     <div className="annotator-chat-room">
       <div className="chat-room-header">
@@ -694,17 +785,6 @@ const AnnotatorChatRoomPage = () => {
         </button>
         <h2>{annotationMode === 'adjacency_pairs' ? (chatRoomName || 'Annotation') : 'Chat Disentanglement Annotation'}</h2>
         <div className="header-controls">
-          {annotationMode === 'adjacency_pairs' && (
-            <label className="completion-toggle">
-              <input
-                type="checkbox"
-                checked={isCompleted}
-                onChange={handleCompletionToggle}
-                disabled={isCompletionSaving}
-              />
-              Finished
-            </label>
-          )}
           <button 
             className="layout-toggle-btn"
             onClick={() => setShowInstructions(!showInstructions)}
@@ -728,6 +808,15 @@ const AnnotatorChatRoomPage = () => {
               </>
             )}
           </div>
+          {annotationMode === 'adjacency_pairs' && (
+            <button
+              className="completion-button"
+              onClick={handleMarkAllAsRead}
+              disabled={isCompletionSaving || totalMessagesCount === 0}
+            >
+              {allRead ? 'Mark all as unread' : 'Mark all as read'}
+            </button>
+          )}
         </div>
       </div>
       {error && (
@@ -829,11 +918,11 @@ const AnnotatorChatRoomPage = () => {
                     </div>
                     <div className="guideline-item">
                       <strong>5. Short Responses</strong>
-                      <p>"Yes", "I agree", "Exactly" ? link to the thread they're responding to</p>
+                      <p>"Yes", "I agree", "Exactly" -> link to the thread they're responding to</p>
                     </div>
                     <div className="guideline-item">
                       <strong>6. Unclear Messages</strong>
-                      <p>If you can't understand due to errors or can't connect to previous turns ? create new thread</p>
+                      <p>If you can't understand due to errors or can't connect to previous turns -> create new thread</p>
                     </div>
                   </div>
                 </div>
@@ -857,10 +946,10 @@ const AnnotatorChatRoomPage = () => {
                     </p>
                     <div className="example-box">
                       <strong>Example:</strong><br/>
-                      � Annotator A: turns 1-5 ? "Thread 0", turns 6-10 ? "Thread 1"<br/>
-                      � Annotator B: turns 1-5 ? "Topic A", turns 6-10 ? "Topic B"<br/>
-                      � Annotator C: turns 1-5 ? "5", turns 6-10 ? "7"<br/>
-                      <span className="result">? <strong>100% agreement!</strong> All grouped the same turns together</span>
+                      - Annotator A: turns 1-5 -> "Thread 0", turns 6-10 -> "Thread 1"<br/>
+                      - Annotator B: turns 1-5 -> "Topic A", turns 6-10 -> "Topic B"<br/>
+                      - Annotator C: turns 1-5 -> "5", turns 6-10 -> "7"<br/>
+                      <span className="result">Result: <strong>100% agreement!</strong> All grouped the same turns together</span>
                     </div>
                   </div>
                 </div>
@@ -915,6 +1004,8 @@ const AnnotatorChatRoomPage = () => {
                     const curveOut = x - 34;
                     const isSelected = selectedRelationId === line.id;
                     const isFocused = shouldFocusRelations && hoveredRelationIds.has(line.id);
+                    const showLabel = isFocused || isSelected;
+                    const labelY = (line.fromY + line.toY) / 2;
                     return (
                       <g key={line.id}>
                         <path
@@ -930,6 +1021,18 @@ const AnnotatorChatRoomPage = () => {
                           onMouseEnter={() => setHoveredRelationId(line.id)}
                           onMouseLeave={() => setHoveredRelationId(null)}
                         />
+                        {showLabel && (
+                          <text
+                            x={x - 12}
+                            y={labelY}
+                            className={`relation-label ${isSelected ? 'selected' : ''} ${isFocused ? 'focused' : ''}`}
+                            fill={line.color}
+                            textAnchor="end"
+                            dominantBaseline="middle"
+                          >
+                            {line.label}
+                          </text>
+                        )}
                       </g>
                     );
                   })}
@@ -972,27 +1075,30 @@ const AnnotatorChatRoomPage = () => {
                     data-message-id={message.id}
                     threadColor={threadColor}
                     threadColors={threadColors}
-                  relationMode={annotationMode === 'adjacency_pairs'}
-                  onPairDragStart={handlePairDragStart}
-                  onPairDrop={handlePairDrop}
-                  onPairDragOver={handlePairDragOver}
-                  onPairSelect={handlePairSourceSelect}
-                  onPairContextMenu={handlePairContextMenu}
-                  isPairSource={pairSourceMessageId === message.id}
-                  isPairTarget={dragHoverMessageId === message.id}
-                  isRelationLinked={
-                    activeLinkedIds ? activeLinkedIds.has(String(message.id)) : false
-                  }
-                  isReplyLinked={
-                    replyHoverIds ? replyHoverIds.has(String(message.id)) : false
-                  }
-                  isUserHoverLinked={hoveredUserId ? hoveredUserId === message.user_id : false}
-                  onReplyHover={(replyToTurnId) => handleReplyHover(message.id, replyToTurnId)}
-                  onReplyHoverEnd={clearReplyHover}
-                  onUserHover={handleUserHover}
-                  onUserHoverEnd={handleUserHoverEnd}
-                  onMessageHover={(messageId) => setHoveredMessageId(messageId)}
-                  onMessageHoverEnd={() => setHoveredMessageId(null)}
+                    relationMode={annotationMode === 'adjacency_pairs'}
+                    onPairDragStart={handlePairDragStart}
+                    onPairDrop={handlePairDrop}
+                    onPairDragOver={handlePairDragOver}
+                    onPairSelect={handlePairSourceSelect}
+                    onPairContextMenu={handlePairContextMenu}
+                    isPairSource={pairSourceMessageId === message.id}
+                    isPairTarget={dragHoverMessageId === message.id}
+                    isRelationLinked={
+                      activeLinkedIds ? activeLinkedIds.has(String(message.id)) : false
+                    }
+                    isReplyLinked={
+                      replyHoverIds ? replyHoverIds.has(String(message.id)) : false
+                    }
+                    isUserHoverLinked={hoveredUserId ? hoveredUserId === message.user_id : false}
+                    onReplyHover={(replyToTurnId) => handleReplyHover(message.id, replyToTurnId)}
+                    onReplyHoverEnd={clearReplyHover}
+                    onUserHover={handleUserHover}
+                    onUserHoverEnd={handleUserHoverEnd}
+                    onMessageHover={(messageId) => setHoveredMessageId(messageId)}
+                    onMessageHoverEnd={() => setHoveredMessageId(null)}
+                    showReadToggle={annotationMode === 'adjacency_pairs'}
+                    isRead={Boolean(readStatus[message.id])}
+                    onReadToggle={() => handleReadToggle(message.id)}
                 />
               );
             })}
@@ -1086,6 +1192,28 @@ const AnnotatorChatRoomPage = () => {
           )}
         </div>
       )}
+      <Modal
+        isOpen={confirmMarkAll.open}
+        onClose={() => setConfirmMarkAll({ open: false, nextValue: false })}
+        title="Are you sure?"
+        size="small"
+      >
+        <p>All previous marks will be cleared.</p>
+        <div className="modal-actions">
+          <button
+            className="action-button"
+            onClick={() => setConfirmMarkAll({ open: false, nextValue: false })}
+          >
+            Cancel
+          </button>
+          <button
+            className="action-button danger"
+            onClick={applyMarkAll}
+          >
+            {confirmMarkAll.nextValue ? 'Mark all as read' : 'Mark all as unread'}
+          </button>
+        </div>
+      </Modal>
       {selectedRelation && (
         <div className="relation-editor">
           <div className="relation-editor-header">
@@ -1099,15 +1227,15 @@ const AnnotatorChatRoomPage = () => {
           </div>
           <div className="relation-editor-body">
             <div className="relation-editor-turn">
-              <div className="relation-editor-label">Turn A</div>
+              <div className="relation-editor-label">FPP</div>
               <div className="relation-editor-text">
-                {messages.find((m) => m.id === selectedRelation.from_message_id)?.turn_text || 'Unavailable'}
+                {messages.find((m) => m.id === selectedRelation.to_message_id)?.turn_text || 'Unavailable'}
               </div>
             </div>
             <div className="relation-editor-turn">
-              <div className="relation-editor-label">Turn B</div>
+              <div className="relation-editor-label">SPP</div>
               <div className="relation-editor-text">
-                {messages.find((m) => m.id === selectedRelation.to_message_id)?.turn_text || 'Unavailable'}
+                {messages.find((m) => m.id === selectedRelation.from_message_id)?.turn_text || 'Unavailable'}
               </div>
             </div>
             <div className="relation-editor-controls">
@@ -1135,7 +1263,7 @@ const AnnotatorChatRoomPage = () => {
       )}
       {showScrollToTop && (
         <button className="scroll-to-top-btn" onClick={scrollToTop} title="Scroll to top">
-          ↑
+          ?
         </button>
       )}
     </div>
@@ -1143,6 +1271,10 @@ const AnnotatorChatRoomPage = () => {
 };
 
 export default AnnotatorChatRoomPage;
+
+
+
+
 
 
 

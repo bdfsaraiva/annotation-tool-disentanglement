@@ -4,6 +4,7 @@ const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
 
 const api = axios.create({
     baseURL: API_URL,
+    timeout: 15000,
     headers: {
         'Content-Type': 'application/json',
     },
@@ -41,6 +42,11 @@ api.interceptors.response.use(
             originalRequest._retry = true;
             try {
                 const refreshToken = localStorage.getItem('refresh_token');
+                if (!refreshToken) {
+                    localStorage.removeItem('access_token');
+                    window.location.href = '/login';
+                    return Promise.reject(error);
+                }
                 const response = await axios.post(`${API_URL}/auth/refresh`, {
                     refresh_token: refreshToken,
                 });
@@ -194,6 +200,10 @@ export const projects = {
     deleteChatRoom: async (chatRoomId) => {
         await api.delete(`/admin/chat-rooms/${chatRoomId}`);
         return true;
+    },
+    updateChatRoom: async (chatRoomId, updates) => {
+        const response = await api.put(`/admin/chat-rooms/${chatRoomId}`, updates);
+        return response.data;
     },
     getChatRoom: async (projectId, roomId) => {
         const response = await api.get(`/projects/${projectId}/chat-rooms/${roomId}`);
@@ -424,6 +434,19 @@ export const adjacencyPairs = {
     deleteAdjacencyPair: async (projectId, chatRoomId, pairId) => {
         await api.delete(`/projects/${projectId}/chat-rooms/${chatRoomId}/adjacency-pairs/${pairId}`);
         return true;
+    },
+    importAdjacencyPairs: async (projectId, chatRoomId, file, mode = 'merge') => {
+        const formData = new FormData();
+        formData.append('file', file);
+        const response = await api.post(
+            `/projects/${projectId}/chat-rooms/${chatRoomId}/adjacency-pairs/import`,
+            formData,
+            {
+                headers: { 'Content-Type': 'multipart/form-data' },
+                params: { mode }
+            }
+        );
+        return response.data;
     },
     exportChatRoomPairs: async (chatRoomId, annotatorId = null, filenameOverride = null) => {
         try {

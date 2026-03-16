@@ -100,6 +100,15 @@ def create_chat_room(db: Session, chat_room: schemas.ChatRoomCreate) -> models.C
     db.refresh(db_chat_room)
     return db_chat_room
 
+def update_chat_room(db: Session, chat_room: models.ChatRoom, updates: schemas.ChatRoomUpdate) -> models.ChatRoom:
+    if updates.name is not None:
+        chat_room.name = updates.name
+    if updates.description is not None:
+        chat_room.description = updates.description
+    db.commit()
+    db.refresh(chat_room)
+    return chat_room
+
 def delete_chat_room(db: Session, chat_room: models.ChatRoom) -> None:
     """Delete a chat room from the database."""
     db.delete(chat_room)
@@ -571,6 +580,7 @@ def import_batch_annotations_for_chat_room(
     
     # Process each annotator
     for annotator_data in batch_data.annotators:
+        user = None
         annotator_errors = []
         imported_count = 0
         skipped_count = 0

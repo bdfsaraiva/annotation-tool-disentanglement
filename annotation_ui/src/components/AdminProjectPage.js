@@ -30,6 +30,8 @@ const AdminProjectPage = () => {
     const [dragIndex, setDragIndex] = useState(null);
     const [exportModal, setExportModal] = useState({ visible: false, roomId: null, roomName: '' });
     const [exportAnnotatorId, setExportAnnotatorId] = useState('all');
+    const [editChatRoomModal, setEditChatRoomModal] = useState({ open: false, roomId: null, name: '' });
+    const [isRenamingChatRoom, setIsRenamingChatRoom] = useState(false);
 
     const fetchData = useCallback(async () => {
         setLoading(true);
@@ -401,6 +403,32 @@ const AdminProjectPage = () => {
         }
     };
 
+    const handleOpenRenameChatRoom = (room) => {
+        setEditChatRoomModal({ open: true, roomId: room.id, name: room.name || '' });
+    };
+
+    const handleRenameChatRoom = async () => {
+        if (!editChatRoomModal.roomId) return;
+        const nextName = editChatRoomModal.name.trim();
+        if (!nextName) {
+            setError('Chat room name cannot be empty.');
+            return;
+        }
+        setIsRenamingChatRoom(true);
+        try {
+            const updated = await projectsApi.updateChatRoom(editChatRoomModal.roomId, { name: nextName });
+            setChatRooms((prev) => prev.map((room) => (
+                room.id === updated.id ? { ...room, name: updated.name } : room
+            )));
+            setEditChatRoomModal({ open: false, roomId: null, name: '' });
+        } catch (err) {
+            console.error('Failed to rename chat room:', err);
+            setError(err.response?.data?.detail || 'Failed to rename chat room.');
+        } finally {
+            setIsRenamingChatRoom(false);
+        }
+    };
+
     const getStatusBadge = (status) => {
         const badges = {
             'Completed': { class: 'status-complete', text: 'Completed' },
@@ -432,7 +460,7 @@ const AdminProjectPage = () => {
     return (
         <div className="admin-project-page">
             <header className="page-header">
-                <button onClick={() => navigate('/admin')} className="back-button">← Back to Dashboard</button>
+                <button onClick={() => navigate('/admin')} className="back-button">Back to Dashboard</button>
                 <h1>Manage Project<br /><span className="project-name">{project.name}</span></h1>
             </header>
             <div className="management-section">
@@ -444,7 +472,7 @@ const AdminProjectPage = () => {
                             onClick={() => setIsEditingDescription(true)}
                             title="Edit description"
                         >
-                            ✎
+                            Edit
                         </button>
                     )}
                 </div>
@@ -657,6 +685,12 @@ const AdminProjectPage = () => {
                                                         View Chat
                                                     </button>
                                                     <button
+                                                        onClick={() => handleOpenRenameChatRoom(room)}
+                                                        className="action-button"
+                                                    >
+                                                        Rename
+                                                    </button>
+                                                    <button
                                                         onClick={() => navigate(`/admin/projects/${project.id}/analysis/${room.id}`)}
                                                         className="action-button analyze-button"
                                                         disabled={!chatRoomAnalytics[room.id]?.canAnalyze}
@@ -734,6 +768,42 @@ const AdminProjectPage = () => {
                     </button>
                 </div>
             </Modal>
+
+            <Modal
+                isOpen={editChatRoomModal.open}
+                onClose={() => setEditChatRoomModal({ open: false, roomId: null, name: '' })}
+                title="Rename chat room"
+                size="small"
+            >
+                <div className="rename-chat-room">
+                    <label htmlFor="chat-room-name" className="form-label">Name</label>
+                    <input
+                        id="chat-room-name"
+                        type="text"
+                        value={editChatRoomModal.name}
+                        onChange={(e) => setEditChatRoomModal((prev) => ({ ...prev, name: e.target.value }))}
+                        className="form-input"
+                        placeholder="New chat room name"
+                        disabled={isRenamingChatRoom}
+                    />
+                    <div className="modal-actions">
+                        <button
+                            className="action-button secondary"
+                            onClick={() => setEditChatRoomModal({ open: false, roomId: null, name: '' })}
+                            disabled={isRenamingChatRoom}
+                        >
+                            Cancel
+                        </button>
+                        <button
+                            className="action-button"
+                            onClick={handleRenameChatRoom}
+                            disabled={isRenamingChatRoom}
+                        >
+                            {isRenamingChatRoom ? 'Saving...' : 'Save'}
+                        </button>
+                    </div>
+                </div>
+            </Modal>
             
             <div className="management-section danger-zone">
                 <h2>Danger Zone</h2>
@@ -753,3 +823,4 @@ const AdminProjectPage = () => {
 };
 
 export default AdminProjectPage; 
+

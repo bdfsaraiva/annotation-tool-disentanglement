@@ -31,6 +31,7 @@
   margin-left: auto; /* push controls to the far right, increasing space from title */
 }
 
+
 .completion-toggle {
   display: inline-flex;
   align-items: center;
@@ -50,27 +51,52 @@
   accent-color: var(--primary-color);
 }
 
-.layout-toggle-btn {
-  /* More prominent toggle button styling */
-  background-color: var(--primary-color); /* make it stand out */
-  border: 1px solid var(--primary-color-dark);
-  color: #ffffff;
-  width: 2.5rem;
-  height: 2.5rem;
-  font-size: 1.3rem;
-  line-height: 1;
+.completion-button {
+  background-color: var(--background-color-tertiary);
+  border: 1px solid var(--border-color);
+  color: var(--text-color-primary);
+  padding: 0.15rem 0.4rem;
   border-radius: var(--border-radius);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  cursor: pointer;
+  font-size: 0.7rem;
+  font-weight: 600;
   transition: all 0.2s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.completion-button:hover {
+  border-color: var(--text-color-secondary);
+}
+
+.completion-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.layout-toggle-btn {
+  background-color: var(--background-color-tertiary);
+  border: 1px solid var(--border-color);
+  color: var(--text-color-primary);
+  padding: 0.15rem 0.4rem;
+  border-radius: var(--border-radius);
+  cursor: pointer;
+  font-size: 0.7rem;
+  font-weight: 600;
+  transition: all 0.2s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
 }
 
 .layout-toggle-btn:hover {
-  background-color: var(--primary-color-dark);
-  transform: scale(1.1);
+  border-color: var(--text-color-secondary);
 }
 
 .layout-toggle-btn:active {
-  transform: scale(1);
+  transform: none;
 }
 
 .chat-room-header h2 {
@@ -454,6 +480,15 @@
 .relation-line {
   cursor: pointer;
   pointer-events: stroke;
+}
+
+.relation-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  paint-order: stroke;
+  stroke: var(--background-color-primary);
+  stroke-width: 3px;
+  pointer-events: none;
 }
 
 .messages-content.relation-dimmed .relation-line {
@@ -1052,4 +1087,13 @@
   padding: 0.4rem 0.75rem;
   font-size: 0.8rem;
   cursor: pointer;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 1rem;
+  justify-content: flex-end;
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border-color);
 }

@@ -127,6 +127,27 @@
   gap: 0.5rem;
 }
 
+.read-flag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 0.15rem 0.35rem;
+  border-radius: var(--border-radius);
+  background-color: var(--background-color-tertiary);
+  border: 1px solid var(--border-color);
+  color: var(--text-color-primary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.read-flag input {
+  width: 12px;
+  height: 12px;
+  accent-color: var(--primary-color);
+}
+
 /* Enhanced User ID with click functionality */
 .user-id {
   cursor: pointer;

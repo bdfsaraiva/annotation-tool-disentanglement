@@ -288,6 +288,33 @@ async def create_chat_room_and_import_csv(
         if os.path.exists(temp_file_path):
             os.remove(temp_file_path)
 
+@router.put("/chat-rooms/{chat_room_id}", response_model=schemas.ChatRoom)
+async def update_chat_room(
+    chat_room_id: int,
+    updates: schemas.ChatRoomUpdate,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(get_current_admin_user)
+):
+    """Update a chat room (admin only)."""
+    chat_room = crud.get_chat_room(db, chat_room_id)
+    if not chat_room:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Chat room not found"
+        )
+    if updates.name is not None:
+        existing = db.query(models.ChatRoom).filter(
+            models.ChatRoom.project_id == chat_room.project_id,
+            models.ChatRoom.name == updates.name,
+            models.ChatRoom.id != chat_room_id
+        ).first()
+        if existing:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Chat room name already exists in this project"
+            )
+    return crud.update_chat_room(db, chat_room, updates)
+
 @router.delete("/chat-rooms/{chat_room_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_chat_room(
     chat_room_id: int,
