@@ -122,7 +122,7 @@ const AnnotatorProjectPage = () => {
                     <table className="chat-room-table">
                         <thead>
                             <tr>
-                                <th>Chat Room Name</th>
+                                <th>Chat Room</th>
                                 <th>Description</th>
                                 <th>Created</th>
                                 <th>Actions</th>

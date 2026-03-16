@@ -7,6 +7,7 @@ const AdminChatRoomView = () => {
     const { projectId, roomId } = useParams();
     const navigate = useNavigate();
     const [chatRoom, setChatRoom] = useState(null);
+    const [project, setProject] = useState(null);
     const [messages, setMessages] = useState([]);
     const [messageAnnotations, setMessageAnnotations] = useState({});
     const [assignedUsers, setAssignedUsers] = useState([]);
@@ -19,12 +20,13 @@ const AdminChatRoomView = () => {
         setError('');
         try {
             // Fetch all required data
-            const [chatRoomData, messagesResponse, usersData] = await Promise.all([
+            const [projectData, chatRoomData, messagesResponse, usersData] = await Promise.all([
+                projectsApi.getProject(projectId),
                 projectsApi.getChatRoom(projectId, roomId),
                 projectsApi.getChatMessages(projectId, roomId),
                 projectsApi.getProjectUsers(projectId)
             ]);
-            
+            setProject(projectData);
             setChatRoom(chatRoomData);
             const messagesData = messagesResponse.messages || [];
             setMessages(messagesData);
@@ -100,11 +102,13 @@ const AdminChatRoomView = () => {
         <div className="admin-chat-room-view">
             <header className="page-header">
                 <button onClick={() => navigate(`/admin/projects/${projectId}`)} className="back-button">
-                    ← Back to Project
+                    Back to Project
                 </button>
                 <div className="header-info">
                     <h1>{chatRoom.name}</h1>
-                    <p className="chat-room-description">{chatRoom.description}</p>
+                    {project?.annotation_type !== "adjacency_pairs" && chatRoom.description && (
+                        <p className="chat-room-description">{chatRoom.description}</p>
+                    )}
                 </div>
             </header>
 
@@ -215,3 +219,4 @@ const AdminChatRoomView = () => {
 };
 
 export default AdminChatRoomView; 
+

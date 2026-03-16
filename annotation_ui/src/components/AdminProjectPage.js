@@ -650,7 +650,7 @@ const AdminProjectPage = () => {
                         <table>
                             <thead>
                                 <tr>
-                                    <th>Chat Room Name</th>
+                                    <th>Chat Room</th>
                                     <th>Status</th>
                                     <th># Annotators</th>
                                     <th>Avg. Agreement</th>
@@ -690,14 +690,16 @@ const AdminProjectPage = () => {
                                                     >
                                                         Rename
                                                     </button>
-                                                    <button
-                                                        onClick={() => navigate(`/admin/projects/${project.id}/analysis/${room.id}`)}
-                                                        className="action-button analyze-button"
-                                                        disabled={!chatRoomAnalytics[room.id]?.canAnalyze}
-                                                        title={!chatRoomAnalytics[room.id]?.canAnalyze ? "Not enough data for analysis" : "Analyze annotations"}
-                                                    >
-                                                        Analyze
-                                                    </button>
+                                                    {project.annotation_type !== 'adjacency_pairs' && (
+                                                        <button
+                                                            onClick={() => navigate(`/admin/projects/${project.id}/analysis/${room.id}`)}
+                                                            className="action-button analyze-button"
+                                                            disabled={!chatRoomAnalytics[room.id]?.canAnalyze}
+                                                            title={!chatRoomAnalytics[room.id]?.canAnalyze ? "Not enough data for analysis" : "Analyze annotations"}
+                                                        >
+                                                            Analyze
+                                                        </button>
+                                                    )}
                                                     <button 
                                                         onClick={() => handleExportChatRoom(room.id, room.name, chatRoomAnalytics[room.id])}
                                                         className="action-button export-button"

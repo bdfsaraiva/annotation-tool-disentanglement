@@ -52,8 +52,9 @@
 }
 
 .completion-button {
-  background-color: var(--background-color-tertiary);
-  border: 1px solid var(--border-color);
+  /*background-color: var(--background-color-secondary);*/
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
   color: var(--text-color-primary);
   padding: 0.15rem 0.4rem;
   border-radius: var(--border-radius);
@@ -67,7 +68,7 @@
 }
 
 .completion-button:hover {
-  border-color: var(--text-color-secondary);
+  border-color: rgba(255, 255, 255, 0.32);
 }
 
 .completion-button:disabled {
@@ -76,8 +77,9 @@
 }
 
 .layout-toggle-btn {
-  background-color: var(--background-color-tertiary);
-  border: 1px solid var(--border-color);
+  background-color: var(--background-color-secondary);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
   color: var(--text-color-primary);
   padding: 0.15rem 0.4rem;
   border-radius: var(--border-radius);
@@ -92,7 +94,7 @@
 }
 
 .layout-toggle-btn:hover {
-  border-color: var(--text-color-secondary);
+  border-color: rgba(255, 255, 255, 0.32);
 }
 
 .layout-toggle-btn:active {
