@@ -57,6 +57,88 @@
     border-radius: 8px;
 }
 
+.import-panel {
+    margin-bottom: 1.5rem;
+    padding: 1rem;
+    background-color: var(--background-color-secondary);
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+}
+
+.import-panel h3 {
+    margin: 0 0 0.75rem 0;
+    font-size: 1.1rem;
+    color: var(--text-color);
+}
+
+.import-row {
+    display: flex;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    align-items: center;
+    margin-bottom: 0.75rem;
+}
+
+.import-row select,
+.import-row input[type="file"] {
+    padding: 0.4rem 0.6rem;
+}
+
+.import-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.import-error {
+    color: var(--error-color, #dc3545);
+    font-size: 0.85rem;
+    margin-bottom: 0.5rem;
+}
+
+.import-message {
+    color: var(--success-color, #28a745);
+    font-size: 0.85rem;
+    margin-bottom: 0.5rem;
+}
+
+.import-preview {
+    padding: 0.75rem;
+    background-color: var(--background-color);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+}
+
+.import-preview-header {
+    font-size: 0.85rem;
+    color: var(--text-color);
+    margin-bottom: 0.5rem;
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.import-preview-table {
+    max-height: 240px;
+    overflow: auto;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    background-color: var(--background-color-secondary);
+}
+
+.import-preview-table table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.8rem;
+}
+
+.import-preview-table th,
+.import-preview-table td {
+    text-align: left;
+    padding: 0.4rem 0.5rem;
+    border-bottom: 1px solid var(--border-color);
+}
+
 .annotators-reference {
     margin-bottom: 1.5rem;
     padding: 1rem;

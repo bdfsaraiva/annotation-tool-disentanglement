@@ -31,9 +31,9 @@ class TokenResponse(Token):
 
 @router.post("/token", response_model=TokenResponse)
 async def login(
+    request: Request,
     form_data: OAuth2PasswordRequestForm = Depends(),
-    db: Session = Depends(get_db),
-    request: Request
+    db: Session = Depends(get_db)
 ):
     enforce_rate_limit(request, auth_rate_limiter, scope="auth")
     # Find user by username
@@ -69,9 +69,9 @@ async def login(
 
 @router.post("/refresh", response_model=TokenResponse)
 async def refresh_token(
+    request: Request,
     payload: RefreshTokenRequest,
-    db: Session = Depends(get_db),
-    request: Request
+    db: Session = Depends(get_db)
 ):
     enforce_rate_limit(request, auth_rate_limiter, scope="auth")
     token_data = await refresh_access_token(refresh_token=payload.refresh_token, db=db)

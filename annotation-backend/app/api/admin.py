@@ -1,7 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, Query
 from sqlalchemy.orm import Session, aliased
 from typing import List, Optional
-import pandas as pd
 import io
 import os
 import json
@@ -11,7 +10,14 @@ from .. import crud, models, schemas
 from ..dependencies import get_db
 from ..auth import get_current_admin_user, get_password_hash, validate_password_strength
 from ..config import get_settings
-from ..utils.csv_utils import import_chat_messages, validate_csv_format, import_annotations_from_csv, validate_annotations_csv_format
+from ..utils.csv_utils import (
+    import_chat_messages,
+    validate_csv_format,
+    import_annotations_from_csv,
+    validate_annotations_csv_format,
+    preview_chat_messages,
+    preview_annotations_from_csv,
+)
 from ..utils.filename_utils import sanitize_filename
 from ..utils.upload_limits import enforce_max_upload_size, enforce_max_rows
 from fastapi.responses import Response, JSONResponse
@@ -183,6 +189,56 @@ async def delete_project(
         )
     
     crud.delete_project(db, project)
+
+@router.post("/projects/{project_id}/import-chat-room-csv/preview", response_model=schemas.CSVPreviewResponse)
+async def preview_chat_room_csv(
+    project_id: int,
+    file: UploadFile = File(...),
+    limit: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db),
+    _: models.User = Depends(get_current_admin_user)
+):
+    """Preview a CSV file before importing a chat room (admin only)."""
+    project = crud.get_project(db, project_id)
+    if not project:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project not found"
+        )
+    if not file.filename or not file.filename.lower().endswith('.csv'):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File must be a CSV and have a filename"
+        )
+
+    safe_filename = sanitize_filename(os.path.basename(file.filename))
+    temp_file_path = f"uploads/preview_{safe_filename}"
+    try:
+        contents = await file.read()
+        enforce_max_upload_size(len(contents), settings.MAX_UPLOAD_MB, "CSV upload")
+        os.makedirs("uploads", exist_ok=True)
+        with open(temp_file_path, "wb") as f:
+            f.write(contents)
+
+        validate_csv_format(temp_file_path)
+        total_rows, preview_rows, warnings = preview_chat_messages(temp_file_path, limit)
+        enforce_max_rows(total_rows, settings.MAX_IMPORT_ROWS, "CSV messages")
+
+        return schemas.CSVPreviewResponse(
+            total_rows=total_rows,
+            preview_rows=preview_rows,
+            warnings=warnings
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Error processing CSV file: {str(e)}"
+        )
+    finally:
+        if os.path.exists(temp_file_path):
+            os.remove(temp_file_path)
 
 @router.post("/projects/{project_id}/import-chat-room-csv", response_model=schemas.ChatRoomImportResponse)
 async def create_chat_room_and_import_csv(
@@ -470,6 +526,55 @@ async def import_annotations_for_chat_room(
         if os.path.exists(temp_file_path):
             os.remove(temp_file_path)
 
+@router.post("/chat-rooms/{chat_room_id}/import-annotations/preview", response_model=schemas.AnnotationPreviewResponse)
+async def preview_annotations_for_chat_room(
+    chat_room_id: int,
+    file: UploadFile = File(...),
+    limit: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db),
+    _: models.User = Depends(get_current_admin_user)
+):
+    """Preview an annotations CSV before importing (admin only)."""
+    chat_room = crud.get_chat_room(db, chat_room_id)
+    if not chat_room:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Chat room not found"
+        )
+    if not file.filename or not file.filename.lower().endswith('.csv'):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File must be a CSV"
+        )
+
+    safe_filename = sanitize_filename(os.path.basename(file.filename))
+    temp_file_path = f"uploads/preview_annotations_{safe_filename}"
+    try:
+        contents = await file.read()
+        enforce_max_upload_size(len(contents), settings.MAX_UPLOAD_MB, "CSV upload")
+        os.makedirs("uploads", exist_ok=True)
+        with open(temp_file_path, "wb") as f:
+            f.write(contents)
+
+        validate_annotations_csv_format(temp_file_path)
+        total_rows, preview_rows = preview_annotations_from_csv(temp_file_path, limit)
+        enforce_max_rows(total_rows, settings.MAX_IMPORT_ROWS, "Annotations")
+
+        return schemas.AnnotationPreviewResponse(
+            total_rows=total_rows,
+            preview_rows=preview_rows
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Error processing annotation CSV file: {str(e)}"
+        )
+    finally:
+        if os.path.exists(temp_file_path):
+            os.remove(temp_file_path)
+
 # PHASE 3: AGGREGATED ANNOTATIONS FOR ANALYSIS
 
 @router.get("/chat-rooms/{chat_room_id}/aggregated-annotations", response_model=schemas.AggregatedAnnotationsResponse)
@@ -624,6 +729,96 @@ async def import_batch_annotations(
         )
     finally:
         # Clean up temporary file
+        if os.path.exists(temp_file_path):
+            os.remove(temp_file_path)
+
+@router.post("/chat-rooms/{chat_room_id}/import-batch-annotations/preview", response_model=schemas.BatchAnnotationPreviewResponse)
+async def preview_batch_annotations(
+    chat_room_id: int,
+    file: UploadFile = File(...),
+    limit: int = Query(10, ge=1, le=50),
+    db: Session = Depends(get_db),
+    _: models.User = Depends(get_current_admin_user)
+):
+    """Preview a batch annotations JSON file before importing (admin only)."""
+    if not file.filename or not file.filename.lower().endswith('.json'):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File must be a JSON file"
+        )
+
+    chat_room = crud.get_chat_room(db, chat_room_id)
+    if not chat_room:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Chat room not found"
+        )
+
+    safe_filename = sanitize_filename(os.path.basename(file.filename))
+    temp_file_path = f"uploads/preview_batch_{safe_filename}"
+    try:
+        contents = await file.read()
+        enforce_max_upload_size(len(contents), settings.MAX_UPLOAD_MB, "JSON upload")
+        os.makedirs("uploads", exist_ok=True)
+        with open(temp_file_path, "wb") as f:
+            f.write(contents)
+
+        try:
+            with open(temp_file_path, 'r', encoding='utf-8') as f:
+                json_data = json.load(f)
+        except json.JSONDecodeError as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid JSON format: {str(e)}"
+            )
+
+        try:
+            batch_data = schemas.BatchAnnotationImport(**json_data)
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid batch annotation format: {str(e)}"
+            )
+
+        if batch_data.batch_metadata.chat_room_id != chat_room_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Chat room ID mismatch: JSON contains {batch_data.batch_metadata.chat_room_id}, but endpoint expects {chat_room_id}"
+            )
+        if batch_data.batch_metadata.project_id != chat_room.project_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Project ID mismatch: JSON contains {batch_data.batch_metadata.project_id}, but chat room belongs to project {chat_room.project_id}"
+            )
+
+        total_annotations = sum(len(a.annotations) for a in batch_data.annotators)
+        enforce_max_rows(total_annotations, settings.MAX_IMPORT_ROWS, "Batch annotations")
+
+        preview_annotators = []
+        for annotator in batch_data.annotators[:limit]:
+            preview_annotators.append(
+                schemas.BatchAnnotationPreviewAnnotator(
+                    annotator_username=annotator.annotator_username,
+                    annotator_name=annotator.annotator_name,
+                    annotations_count=len(annotator.annotations)
+                )
+            )
+
+        return schemas.BatchAnnotationPreviewResponse(
+            chat_room_id=chat_room_id,
+            project_id=chat_room.project_id,
+            total_annotators=len(batch_data.annotators),
+            total_annotations=total_annotations,
+            preview_annotators=preview_annotators
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Error processing batch annotation file: {str(e)}"
+        )
+    finally:
         if os.path.exists(temp_file_path):
             os.remove(temp_file_path)
 

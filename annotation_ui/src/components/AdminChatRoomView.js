@@ -14,6 +14,21 @@ const AdminChatRoomView = () => {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
     const [stats, setStats] = useState({});
+    const [annotationFile, setAnnotationFile] = useState(null);
+    const [annotationUserId, setAnnotationUserId] = useState('');
+    const [annotationPreview, setAnnotationPreview] = useState(null);
+    const [annotationPreviewError, setAnnotationPreviewError] = useState(null);
+    const [annotationImportError, setAnnotationImportError] = useState(null);
+    const [annotationImportMessage, setAnnotationImportMessage] = useState(null);
+    const [isAnnotationPreviewing, setIsAnnotationPreviewing] = useState(false);
+    const [isAnnotationImporting, setIsAnnotationImporting] = useState(false);
+    const [batchFile, setBatchFile] = useState(null);
+    const [batchPreview, setBatchPreview] = useState(null);
+    const [batchPreviewError, setBatchPreviewError] = useState(null);
+    const [batchImportError, setBatchImportError] = useState(null);
+    const [batchImportMessage, setBatchImportMessage] = useState(null);
+    const [isBatchPreviewing, setIsBatchPreviewing] = useState(false);
+    const [isBatchImporting, setIsBatchImporting] = useState(false);
 
     const fetchData = useCallback(async () => {
         setLoading(true);
@@ -84,6 +99,105 @@ const AdminChatRoomView = () => {
         fetchData();
     }, [fetchData]);
 
+    const handleAnnotationFileSelect = (event) => {
+        setAnnotationFile(event.target.files[0] || null);
+        setAnnotationPreview(null);
+        setAnnotationPreviewError(null);
+        setAnnotationImportError(null);
+        setAnnotationImportMessage(null);
+    };
+
+    const handleAnnotationPreview = async () => {
+        if (!annotationFile) {
+            setAnnotationPreviewError('Please select a CSV file.');
+            return;
+        }
+        setIsAnnotationPreviewing(true);
+        setAnnotationPreviewError(null);
+        try {
+            const preview = await annotationsApi.previewImportAnnotations(roomId, annotationFile, 20);
+            setAnnotationPreview(preview);
+        } catch (err) {
+            console.error('Failed to preview annotations:', err);
+            setAnnotationPreviewError(err.message || 'Failed to preview annotations.');
+        } finally {
+            setIsAnnotationPreviewing(false);
+        }
+    };
+
+    const handleAnnotationImport = async () => {
+        if (!annotationFile || !annotationUserId) {
+            setAnnotationImportError('Select a user and a CSV file before importing.');
+            return;
+        }
+        setIsAnnotationImporting(true);
+        setAnnotationImportError(null);
+        try {
+            const result = await annotationsApi.importAnnotations(roomId, annotationUserId, annotationFile);
+            setAnnotationImportMessage(
+                `Imported ${result.imported_count} annotations (skipped ${result.skipped_count}).`
+            );
+            setAnnotationFile(null);
+            setAnnotationPreview(null);
+            setAnnotationUserId('');
+            fetchData();
+        } catch (err) {
+            console.error('Failed to import annotations:', err);
+            setAnnotationImportError(err.message || 'Failed to import annotations.');
+        } finally {
+            setIsAnnotationImporting(false);
+        }
+    };
+
+    const handleBatchFileSelect = (event) => {
+        setBatchFile(event.target.files[0] || null);
+        setBatchPreview(null);
+        setBatchPreviewError(null);
+        setBatchImportError(null);
+        setBatchImportMessage(null);
+    };
+
+    const handleBatchPreview = async () => {
+        if (!batchFile) {
+            setBatchPreviewError('Please select a JSON file.');
+            return;
+        }
+        setIsBatchPreviewing(true);
+        setBatchPreviewError(null);
+        try {
+            const preview = await annotationsApi.previewBatchAnnotations(roomId, batchFile, 10);
+            setBatchPreview(preview);
+        } catch (err) {
+            console.error('Failed to preview batch import:', err);
+            setBatchPreviewError(err.message || 'Failed to preview batch import.');
+        } finally {
+            setIsBatchPreviewing(false);
+        }
+    };
+
+    const handleBatchImport = async () => {
+        if (!batchFile) {
+            setBatchImportError('Select a JSON file before importing.');
+            return;
+        }
+        setIsBatchImporting(true);
+        setBatchImportError(null);
+        try {
+            const result = await annotationsApi.importBatchAnnotations(roomId, batchFile);
+            setBatchImportMessage(
+                `Imported ${result.total_imported} annotations from ${result.total_annotators} annotators.`
+            );
+            setBatchFile(null);
+            setBatchPreview(null);
+            fetchData();
+        } catch (err) {
+            console.error('Failed to import batch annotations:', err);
+            setBatchImportError(err.message || 'Failed to import batch annotations.');
+        } finally {
+            setIsBatchImporting(false);
+        }
+    };
+
     const getUsersWhoAnnotated = (messageId) => {
         const annotations = messageAnnotations[messageId] || [];
         return [...new Set(annotations.map(ann => ann.annotator_username))];
@@ -130,6 +244,110 @@ const AdminChatRoomView = () => {
                     <span className="stat-label">Completion Rate</span>
                 </div>
             </div>
+
+            {project?.annotation_type !== "adjacency_pairs" && (
+                <div className="import-panel">
+                    <h3>Import Annotations (CSV)</h3>
+                    <div className="import-row">
+                        <select
+                            value={annotationUserId}
+                            onChange={(e) => setAnnotationUserId(e.target.value)}
+                        >
+                            <option value="">Select user</option>
+                            {assignedUsers.map((user) => (
+                                <option key={user.id} value={user.id}>
+                                    {user.username}
+                                </option>
+                            ))}
+                        </select>
+                        <input type="file" accept=".csv" onChange={handleAnnotationFileSelect} />
+                        <div className="import-actions">
+                            <button className="action-button secondary" onClick={handleAnnotationPreview} disabled={!annotationFile || isAnnotationPreviewing}>
+                                {isAnnotationPreviewing ? 'Previewing...' : 'Preview'}
+                            </button>
+                            <button className="action-button" onClick={handleAnnotationImport} disabled={!annotationFile || !annotationUserId || isAnnotationImporting}>
+                                {isAnnotationImporting ? 'Importing...' : 'Import'}
+                            </button>
+                        </div>
+                    </div>
+                    {annotationPreviewError && <div className="import-error">{annotationPreviewError}</div>}
+                    {annotationImportError && <div className="import-error">{annotationImportError}</div>}
+                    {annotationImportMessage && <div className="import-message">{annotationImportMessage}</div>}
+                    {annotationPreview && (
+                        <div className="import-preview">
+                            <div className="import-preview-header">
+                                <strong>Total rows:</strong> {annotationPreview.total_rows}
+                            </div>
+                            <div className="import-preview-table">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>turn_id</th>
+                                            <th>thread_id</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {annotationPreview.preview_rows.map((row, index) => (
+                                            <tr key={`ann-preview-${index}`}>
+                                                <td>{row.turn_id}</td>
+                                                <td>{row.thread_id}</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            )}
+
+            {project?.annotation_type !== "adjacency_pairs" && (
+                <div className="import-panel">
+                    <h3>Batch Import (JSON)</h3>
+                    <div className="import-row">
+                        <input type="file" accept=".json" onChange={handleBatchFileSelect} />
+                        <div className="import-actions">
+                            <button className="action-button secondary" onClick={handleBatchPreview} disabled={!batchFile || isBatchPreviewing}>
+                                {isBatchPreviewing ? 'Previewing...' : 'Preview'}
+                            </button>
+                            <button className="action-button" onClick={handleBatchImport} disabled={!batchFile || isBatchImporting}>
+                                {isBatchImporting ? 'Importing...' : 'Import'}
+                            </button>
+                        </div>
+                    </div>
+                    {batchPreviewError && <div className="import-error">{batchPreviewError}</div>}
+                    {batchImportError && <div className="import-error">{batchImportError}</div>}
+                    {batchImportMessage && <div className="import-message">{batchImportMessage}</div>}
+                    {batchPreview && (
+                        <div className="import-preview">
+                            <div className="import-preview-header">
+                                <strong>Total annotators:</strong> {batchPreview.total_annotators} |
+                                <strong> Total annotations:</strong> {batchPreview.total_annotations}
+                            </div>
+                            <div className="import-preview-table">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>annotator_username</th>
+                                            <th>annotator_name</th>
+                                            <th>annotations</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {batchPreview.preview_annotators.map((row, index) => (
+                                            <tr key={`batch-preview-${index}`}>
+                                                <td>{row.annotator_username}</td>
+                                                <td>{row.annotator_name}</td>
+                                                <td>{row.annotations_count}</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            )}
 
             <div className="annotators-reference">
                 <h3>Annotators Reference</h3>

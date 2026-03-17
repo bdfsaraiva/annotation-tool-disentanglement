@@ -173,6 +173,17 @@ class CSVImportResponse(BaseModel):
     errors: List[str] = []
     warnings: List[str] = []
 
+class CSVPreviewRow(BaseModel):
+    turn_id: str
+    user_id: str
+    turn_text: str
+    reply_to_turn: Optional[str] = None
+
+class CSVPreviewResponse(BaseModel):
+    total_rows: int
+    preview_rows: List[CSVPreviewRow]
+    warnings: List[str] = []
+
 # New schema for combined chat room creation and import
 class ChatRoomImportResponse(BaseModel):
     chat_room: ChatRoom  # Details of the created chat room
@@ -189,6 +200,14 @@ class AnnotationImportResponse(BaseModel):
     imported_count: int
     skipped_count: int
     errors: List[str] = []
+
+class AnnotationPreviewRow(BaseModel):
+    turn_id: str
+    thread_id: str
+
+class AnnotationPreviewResponse(BaseModel):
+    total_rows: int
+    preview_rows: List[AnnotationPreviewRow]
 
 # PHASE 3: AGGREGATED ANNOTATION ANALYSIS SCHEMAS
 
@@ -260,6 +279,18 @@ class BatchAnnotationImportResponse(BaseModel):
     total_skipped: int
     results: List[BatchAnnotationResult]
     global_errors: List[str] = []
+
+class BatchAnnotationPreviewAnnotator(BaseModel):
+    annotator_username: str
+    annotator_name: str
+    annotations_count: int
+
+class BatchAnnotationPreviewResponse(BaseModel):
+    chat_room_id: int
+    project_id: int
+    total_annotators: int
+    total_annotations: int
+    preview_annotators: List[BatchAnnotationPreviewAnnotator]
 
 # PHASE 5: INTER-ANNOTATOR AGREEMENT (IAA) SCHEMAS
 

@@ -18,10 +18,13 @@ const AdminProjectPage = () => {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
     const [importError, setImportError] = useState(null);
+    const [previewError, setPreviewError] = useState(null);
+    const [importPreview, setImportPreview] = useState(null);
     const [isAssigning, setIsAssigning] = useState(false);
     const [userToAssign, setUserToAssign] = useState('');
     const [selectedFile, setSelectedFile] = useState(null);
     const [isUploading, setIsUploading] = useState(false);
+    const [isPreviewing, setIsPreviewing] = useState(false);
     const [relationTypes, setRelationTypes] = useState([]);
     const [relationTypeInput, setRelationTypeInput] = useState('');
     const [isUpdatingProject, setIsUpdatingProject] = useState(false);
@@ -188,6 +191,26 @@ const AdminProjectPage = () => {
     const handleFileSelect = (e) => {
         setSelectedFile(e.target.files[0]);
         setImportError(null);
+        setPreviewError(null);
+        setImportPreview(null);
+    };
+
+    const handlePreviewCsv = async () => {
+        if (!selectedFile) {
+            setPreviewError("Please select a file to preview.");
+            return;
+        }
+        setIsPreviewing(true);
+        setPreviewError(null);
+        try {
+            const preview = await projectsApi.previewImportCsv(projectId, selectedFile, 20);
+            setImportPreview(preview);
+        } catch (err) {
+            console.error(err);
+            setPreviewError(err.message || 'Failed to preview CSV.');
+        } finally {
+            setIsPreviewing(false);
+        }
     };
 
     const handleUploadCsv = async () => {
@@ -203,6 +226,7 @@ const AdminProjectPage = () => {
             });
             alert(`Import successful: ${response.import_details.imported_count} turns imported.`);
             setSelectedFile(null);
+            setImportPreview(null);
             document.getElementById('csv-file-input').value = ''; // Clear file input
             fetchData(); // Refresh chat room list
         } catch (err) {
@@ -631,9 +655,57 @@ const AdminProjectPage = () => {
                 <div className="import-csv-section">
                     <h3>Import New Chat Room</h3>
                     <input type="file" id="csv-file-input" accept=".csv" onChange={handleFileSelect} />
-                    <button onClick={handleUploadCsv} disabled={!selectedFile || isUploading} className="action-button">
-                        {isUploading ? 'Uploading...' : 'Upload CSV'}
-                    </button>
+                    <div className="import-csv-actions">
+                        <button onClick={handlePreviewCsv} disabled={!selectedFile || isPreviewing} className="action-button secondary">
+                            {isPreviewing ? 'Previewing...' : 'Preview CSV'}
+                        </button>
+                        <button onClick={handleUploadCsv} disabled={!selectedFile || isUploading} className="action-button">
+                            {isUploading ? 'Uploading...' : 'Upload CSV'}
+                        </button>
+                    </div>
+                    {previewError && (
+                        <ErrorMessage
+                            type="warning"
+                            title="Preview Failed"
+                            message={previewError}
+                        />
+                    )}
+                    {importPreview && (
+                        <div className="import-preview">
+                            <div className="import-preview-header">
+                                <strong>Total rows:</strong> {importPreview.total_rows}
+                            </div>
+                            {importPreview.warnings?.length > 0 && (
+                                <div className="import-preview-warnings">
+                                    {importPreview.warnings.map((warning, index) => (
+                                        <div key={`warn-${index}`} className="preview-warning">{warning}</div>
+                                    ))}
+                                </div>
+                            )}
+                            <div className="import-preview-table">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>turn_id</th>
+                                            <th>user_id</th>
+                                            <th>turn_text</th>
+                                            <th>reply_to_turn</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {importPreview.preview_rows.map((row, index) => (
+                                            <tr key={`preview-${index}`}>
+                                                <td>{row.turn_id}</td>
+                                                <td>{row.user_id}</td>
+                                                <td className="preview-text-cell">{row.turn_text}</td>
+                                                <td>{row.reply_to_turn || '-'}</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    )}
                     {importError && (
                         <ErrorMessage
                             type="warning"

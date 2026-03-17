@@ -10,6 +10,11 @@ os.environ["DATABASE_URL"] = "sqlite:///./test_backend.db"
 os.environ["SECRET_KEY"] = "test-secret-key-32chars-minimum-123456"
 os.environ["FIRST_ADMIN_USERNAME"] = "test_admin"
 os.environ["FIRST_ADMIN_PASSWORD"] = "test_admin_pass"
+os.environ["PASSWORD_MIN_LENGTH"] = "4"
+os.environ["PASSWORD_REQUIRE_DIGIT"] = "false"
+os.environ["PASSWORD_REQUIRE_LETTER"] = "false"
+os.environ["AUTH_RATE_LIMIT_REQUESTS"] = "1000000"
+os.environ["AUTH_RATE_LIMIT_WINDOW_SECONDS"] = "1"
 
 from app.main import app
 from app import models

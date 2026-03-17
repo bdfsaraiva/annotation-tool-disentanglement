@@ -197,6 +197,41 @@ export const projects = {
         const response = await api.get(`/projects/${projectId}/chat-rooms`);
         return response.data;
     },
+    previewImportCsv: async (projectId, file, limit = 20) => {
+        try {
+            const formData = new FormData();
+            formData.append('file', file);
+            const response = await api.post(
+                `/admin/projects/${projectId}/import-chat-room-csv/preview`,
+                formData,
+                {
+                    headers: { 'Content-Type': 'multipart/form-data' },
+                    params: { limit }
+                }
+            );
+            return response.data;
+        } catch (error) {
+            console.error('CSV preview error:', error);
+
+            if (!error.response) {
+                throw new Error('Network error or server is not responding. Please check your connection and try again.');
+            }
+
+            if (error.response.status === 413) {
+                throw new Error('File is too large. Please try a smaller file.');
+            }
+
+            if (error.response.status === 403) {
+                throw new Error('You do not have permission to preview this file.');
+            }
+
+            throw new Error(
+                error.response.data?.message ||
+                error.response.data?.detail ||
+                'Failed to preview file. Please check the file format and try again.'
+            );
+        }
+    },
     deleteChatRoom: async (chatRoomId) => {
         await api.delete(`/admin/chat-rooms/${chatRoomId}`);
         return true;
@@ -353,6 +388,123 @@ export const annotations = {
     getChatRoomIAA: async (chatRoomId) => {
         const response = await api.get(`/admin/chat-rooms/${chatRoomId}/iaa`);
         return response.data;
+    },
+    previewImportAnnotations: async (chatRoomId, file, limit = 20) => {
+        try {
+            const formData = new FormData();
+            formData.append('file', file);
+            const response = await api.post(
+                `/admin/chat-rooms/${chatRoomId}/import-annotations/preview`,
+                formData,
+                {
+                    headers: { 'Content-Type': 'multipart/form-data' },
+                    params: { limit }
+                }
+            );
+            return response.data;
+        } catch (error) {
+            console.error('Annotations preview error:', error);
+
+            if (!error.response) {
+                throw new Error('Network error or server is not responding. Please check your connection and try again.');
+            }
+
+            if (error.response.status === 413) {
+                throw new Error('File is too large. Please try a smaller file.');
+            }
+
+            if (error.response.status === 403) {
+                throw new Error('You do not have permission to preview annotations.');
+            }
+
+            throw new Error(
+                error.response.data?.message ||
+                error.response.data?.detail ||
+                'Failed to preview annotations. Please check the file format and try again.'
+            );
+        }
+    },
+    importBatchAnnotations: async (chatRoomId, file, onProgress) => {
+        try {
+            const formData = new FormData();
+            formData.append('file', file);
+
+            const config = {
+                headers: {
+                    'Content-Type': 'multipart/form-data',
+                },
+                onUploadProgress: (progressEvent) => {
+                    if (onProgress) {
+                        const percentCompleted = Math.round(
+                            (progressEvent.loaded * 100) / progressEvent.total
+                        );
+                        onProgress(percentCompleted);
+                    }
+                }
+            };
+
+            const response = await api.post(
+                `/admin/chat-rooms/${chatRoomId}/import-batch-annotations`,
+                formData,
+                config
+            );
+            return response.data;
+        } catch (error) {
+            console.error('Batch import error:', error);
+
+            if (!error.response) {
+                throw new Error('Network error or server is not responding. Please check your connection and try again.');
+            }
+
+            if (error.response.status === 413) {
+                throw new Error('File is too large. Please try a smaller file.');
+            }
+
+            if (error.response.status === 403) {
+                throw new Error('You do not have permission to import batch annotations.');
+            }
+
+            throw new Error(
+                error.response.data?.message ||
+                error.response.data?.detail ||
+                'Failed to import batch annotations. Please check the file format and try again.'
+            );
+        }
+    },
+    previewBatchAnnotations: async (chatRoomId, file, limit = 10) => {
+        try {
+            const formData = new FormData();
+            formData.append('file', file);
+            const response = await api.post(
+                `/admin/chat-rooms/${chatRoomId}/import-batch-annotations/preview`,
+                formData,
+                {
+                    headers: { 'Content-Type': 'multipart/form-data' },
+                    params: { limit }
+                }
+            );
+            return response.data;
+        } catch (error) {
+            console.error('Batch preview error:', error);
+
+            if (!error.response) {
+                throw new Error('Network error or server is not responding. Please check your connection and try again.');
+            }
+
+            if (error.response.status === 413) {
+                throw new Error('File is too large. Please try a smaller file.');
+            }
+
+            if (error.response.status === 403) {
+                throw new Error('You do not have permission to preview batch annotations.');
+            }
+
+            throw new Error(
+                error.response.data?.message ||
+                error.response.data?.detail ||
+                'Failed to preview batch annotations. Please check the file format and try again.'
+            );
+        }
     },
     getChatRoomCompletionSummary: async (chatRoomId) => {
         const response = await api.get(`/admin/chat-rooms/${chatRoomId}/completion-summary`);

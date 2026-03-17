@@ -64,6 +64,7 @@ Admin:
 - POST /admin/projects
 - PUT /admin/projects/{project_id}
 - DELETE /admin/projects/{project_id}
+- POST /admin/projects/{project_id}/import-chat-room-csv/preview
 
 Projects:
 - GET /projects
@@ -79,6 +80,8 @@ Chat rooms and annotations:
 - GET /projects/{project_id}/chat-rooms/{room_id}/annotations
 - POST /projects/{project_id}/messages/{message_id}/annotations
 - DELETE /projects/{project_id}/messages/{message_id}/annotations/{annotation_id}
+- POST /admin/chat-rooms/{chat_room_id}/import-annotations/preview
+- POST /admin/chat-rooms/{chat_room_id}/import-batch-annotations/preview
 
 Adjacency pairs:
 - GET /projects/{project_id}/chat-rooms/{room_id}/adjacency-pairs
