@@ -81,6 +81,8 @@ const AnnotatorChatRoomPage = () => {
   const [hoveredRelationId, setHoveredRelationId] = useState(null);
   const [hoveredMessageId, setHoveredMessageId] = useState(null);
   const [replyHoverIds, setReplyHoverIds] = useState(null);
+  const [suggestedRelation, setSuggestedRelation] = useState(null);
+  const [suggestedRelationType, setSuggestedRelationType] = useState('');
   const [confirmMarkAll, setConfirmMarkAll] = useState({ open: false, nextValue: false });
   const [contextMenu, setContextMenu] = useState({
     visible: false,
@@ -733,6 +735,54 @@ const AnnotatorChatRoomPage = () => {
     return toIndex < fromIndex;
   }, [messageIndexMap]);
 
+  const handleReplyClick = useCallback((currentMessageId, replyToTurnId) => {
+    if (annotationMode !== 'adjacency_pairs') return;
+    if (!replyToTurnId) return;
+    const replyToMessage = messages.find((msg) => String(msg.turn_id) === String(replyToTurnId));
+    if (!replyToMessage) {
+      setError('Reply target not found for this turn.');
+      return;
+    }
+    if (!isBackwardLinkAllowed(currentMessageId, replyToMessage.id)) {
+      setError('You can only link a turn to an earlier turn.');
+      return;
+    }
+    setSuggestedRelation({ fppId: replyToMessage.id, sppId: currentMessageId });
+    setSuggestedRelationType('');
+    setSelectedRelationId(null);
+  }, [annotationMode, messages, isBackwardLinkAllowed]);
+
+  const handleConfirmSuggestedRelation = useCallback(async () => {
+    if (!suggestedRelation || !suggestedRelationType) return;
+    if (!isBackwardLinkAllowed(suggestedRelation.sppId, suggestedRelation.fppId)) {
+      setError('You can only link a turn to an earlier turn.');
+      return;
+    }
+    setIsSubmitting(true);
+    try {
+      await adjacencyPairsApi.createAdjacencyPair(projectId, roomId, {
+        from_message_id: suggestedRelation.sppId,
+        to_message_id: suggestedRelation.fppId,
+        relation_type: suggestedRelationType
+      });
+      await refreshAdjacencyPairs();
+      setSuggestedRelation(null);
+      setSuggestedRelationType('');
+    } catch (err) {
+      console.error('Error creating suggested adjacency pair:', err);
+      setError(parseApiError(err));
+    } finally {
+      setIsSubmitting(false);
+    }
+  }, [
+    suggestedRelation,
+    suggestedRelationType,
+    isBackwardLinkAllowed,
+    projectId,
+    roomId,
+    refreshAdjacencyPairs
+  ]);
+
   const dragPreviewLine = useMemo(() => {
     if (!dragSourceMessageId || !dragHoverMessageId || dragSourceMessageId === dragHoverMessageId) return null;
     const fromY = messagePositions[String(dragSourceMessageId)];
@@ -745,6 +795,14 @@ const AnnotatorChatRoomPage = () => {
     () => adjacencyPairs.find((pair) => pair.id === selectedRelationId) || null,
     [adjacencyPairs, selectedRelationId]
   );
+  const suggestedFpp = useMemo(() => {
+    if (!suggestedRelation) return null;
+    return messages.find((msg) => msg.id === suggestedRelation.fppId) || null;
+  }, [messages, suggestedRelation]);
+  const suggestedSpp = useMemo(() => {
+    if (!suggestedRelation) return null;
+    return messages.find((msg) => msg.id === suggestedRelation.sppId) || null;
+  }, [messages, suggestedRelation]);
   const hoveredRelation = useMemo(
     () => adjacencyPairs.find((pair) => pair.id === hoveredRelationId) || null,
     [adjacencyPairs, hoveredRelationId]
@@ -1017,6 +1075,7 @@ const AnnotatorChatRoomPage = () => {
                           onClick={(event) => {
                             event.stopPropagation();
                             setSelectedRelationId(line.id);
+                            setSuggestedRelation(null);
                           }}
                           onMouseEnter={() => setHoveredRelationId(line.id)}
                           onMouseLeave={() => setHoveredRelationId(null)}
@@ -1092,6 +1151,7 @@ const AnnotatorChatRoomPage = () => {
                     isUserHoverLinked={hoveredUserId ? hoveredUserId === message.user_id : false}
                     onReplyHover={(replyToTurnId) => handleReplyHover(message.id, replyToTurnId)}
                     onReplyHoverEnd={clearReplyHover}
+                    onReplyClick={(replyToTurnId) => handleReplyClick(message.id, replyToTurnId)}
                     onUserHover={handleUserHover}
                     onUserHoverEnd={handleUserHoverEnd}
                     onMessageHover={(messageId) => setHoveredMessageId(messageId)}
@@ -1214,6 +1274,60 @@ const AnnotatorChatRoomPage = () => {
           </button>
         </div>
       </Modal>
+      {suggestedRelation && (
+        <div className="relation-editor suggested-relation">
+          <div className="relation-editor-header">
+            <div className="relation-editor-title">Suggested relation</div>
+            <button
+              className="relation-editor-close"
+              onClick={() => {
+                setSuggestedRelation(null);
+                setSuggestedRelationType('');
+              }}
+            >
+              Close
+            </button>
+          </div>
+          <div className="relation-editor-body">
+            <div className="relation-editor-turn">
+              <div className="relation-editor-label">FPP</div>
+              <div className="relation-editor-text">
+                {suggestedFpp?.turn_text || 'Unavailable'}
+              </div>
+            </div>
+            <div className="relation-editor-turn">
+              <div className="relation-editor-label">SPP</div>
+              <div className="relation-editor-text">
+                {suggestedSpp?.turn_text || 'Unavailable'}
+              </div>
+            </div>
+            <div className="relation-editor-controls">
+              <label className="relation-editor-label">Relation Type</label>
+              <select
+                className="relation-editor-select"
+                value={suggestedRelationType}
+                onChange={(e) => setSuggestedRelationType(e.target.value)}
+                disabled={isSubmitting || relationTypes.length === 0}
+                required
+              >
+                <option value="" disabled>Select a relation label</option>
+                {relationTypes.map((type) => (
+                  <option key={type} value={type}>{type}</option>
+                ))}
+              </select>
+              <div className="relation-editor-actions">
+                <button
+                  className="relation-editor-confirm"
+                  onClick={handleConfirmSuggestedRelation}
+                  disabled={isSubmitting || !suggestedRelationType || relationTypes.length === 0}
+                >
+                  Confirm relation
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       {selectedRelation && (
         <div className="relation-editor">
           <div className="relation-editor-header">

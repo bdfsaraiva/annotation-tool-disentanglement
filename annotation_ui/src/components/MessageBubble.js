@@ -31,6 +31,7 @@ const MessageBubble = ({
   isUserHoverLinked = false,
   onReplyHover,
   onReplyHoverEnd,
+  onReplyClick,
   onUserHover,
   onUserHoverEnd,
   onMessageHover,
@@ -221,6 +222,12 @@ const MessageBubble = ({
             className="reply-to"
             onMouseEnter={() => onReplyHover && onReplyHover(replyToValue)}
             onMouseLeave={() => onReplyHoverEnd && onReplyHoverEnd()}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (onReplyClick) {
+                onReplyClick(replyToValue);
+              }
+            }}
 //            title="Hover to highlight reply chain"
           >
             <span className="reply-to-label">↪</span>
