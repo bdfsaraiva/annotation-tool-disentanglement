@@ -1,0 +1,44 @@
+name: Frontend Build & Tests
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'annotation_ui/**'
+      - '.github/workflows/frontend-build.yml'
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'annotation_ui/**'
+
+jobs:
+  build-and-test:
+    name: Node ${{ matrix.node-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: ["18", "20"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+          cache-dependency-path: annotation_ui/package-lock.json
+
+      - name: Install dependencies
+        working-directory: annotation_ui
+        run: npm ci
+
+      - name: Run tests
+        working-directory: annotation_ui
+        run: npm test -- --run
+
+      - name: Build
+        working-directory: annotation_ui
+        env:
+          API_URL: http://localhost:8000
+        run: npm run build
