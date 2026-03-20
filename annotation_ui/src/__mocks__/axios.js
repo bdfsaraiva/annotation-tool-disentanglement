@@ -1,21 +1,25 @@
+import { vi } from 'vitest';
+
 const axiosInstance = {
   interceptors: {
-    request: { use: jest.fn(), eject: jest.fn() },
-    response: { use: jest.fn(), eject: jest.fn() },
+    request: { use: vi.fn(), eject: vi.fn() },
+    response: { use: vi.fn(), eject: vi.fn() },
   },
-  get: jest.fn(() => Promise.resolve({ data: {} })),
-  post: jest.fn(() => Promise.resolve({ data: {} })),
-  put: jest.fn(() => Promise.resolve({ data: {} })),
-  delete: jest.fn(() => Promise.resolve({ data: {} })),
+  get: vi.fn(() => Promise.resolve({ data: {} })),
+  post: vi.fn(() => Promise.resolve({ data: {} })),
+  put: vi.fn(() => Promise.resolve({ data: {} })),
+  delete: vi.fn(() => Promise.resolve({ data: {} })),
+  defaults: { headers: { common: {} } },
 };
 
 const axios = {
-  create: jest.fn(() => axiosInstance),
+  create: vi.fn(() => axiosInstance),
   get: axiosInstance.get,
   post: axiosInstance.post,
   put: axiosInstance.put,
   delete: axiosInstance.delete,
+  defaults: axiosInstance.defaults,
 };
 
-module.exports = axios;
-module.exports.default = axios;
+export default axios;
+export const { create, get, post, put } = axios;

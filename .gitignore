@@ -97,3 +97,4 @@ build/
 .nuxt/
 .nitro/
 .output/
+/.claude/

@@ -3,13 +3,16 @@ import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { projects as projectsApi, users as usersApi, annotations as annotationsApi, adjacencyPairs as adjacencyPairsApi } from '../utils/api';
 import ErrorMessage from './ErrorMessage';
 import Modal from './Modal';
+import ConfirmationModal from './ConfirmationModal';
+import { useToast } from '../contexts/ToastContext';
 import './AdminProjectPage.css';
 
 const AdminProjectPage = () => {
     const { projectId } = useParams();
     const navigate = useNavigate();
     const location = useLocation();
-    
+    const { addToast } = useToast();
+
     const [project, setProject] = useState(null);
     const [assignedUsers, setAssignedUsers] = useState([]);
     const [allUsers, setAllUsers] = useState([]);
@@ -36,6 +39,18 @@ const AdminProjectPage = () => {
     const [editChatRoomModal, setEditChatRoomModal] = useState({ open: false, roomId: null, name: '' });
     const [isRenamingChatRoom, setIsRenamingChatRoom] = useState(false);
 
+    // ── Confirmation modal state ──────────────────────────────────────────────
+    const [confirmModal, setConfirmModal] = useState({
+        open: false, title: '', message: '', confirmText: 'Confirm',
+        type: 'danger', onConfirm: null
+    });
+
+    const openConfirm = (title, message, onConfirm, { type = 'danger', confirmText = 'Confirm' } = {}) => {
+        setConfirmModal({ open: true, title, message, confirmText, type, onConfirm });
+    };
+    const closeConfirm = () => setConfirmModal(prev => ({ ...prev, open: false, onConfirm: null }));
+
+    // ── Data fetching ─────────────────────────────────────────────────────────
     const fetchData = useCallback(async () => {
         setLoading(true);
         setError(null);
@@ -52,11 +67,9 @@ const AdminProjectPage = () => {
             setAssignedUsers(assignedUsersData);
             setAllUsers(allUsersData);
             setChatRooms(chatRoomsData);
-            
-            // Fetch analytics for each chat room
             await fetchChatRoomAnalytics(chatRoomsData, projectData);
         } catch (err) {
-            console.error("Failed to fetch project admin data:", err);
+            console.error('Failed to fetch project admin data:', err);
             setError(err.response?.data?.detail || 'Failed to load project data.');
         } finally {
             setLoading(false);
@@ -71,21 +84,11 @@ const AdminProjectPage = () => {
                 try {
                     const statusData = await annotationsApi.getAdjacencyPairsStatus(room.id);
                     analytics[room.id] = {
-                        status: statusData.status,
-                        completedAnnotators: statusData.completed_count,
-                        totalAnnotators: statusData.total_assigned,
-                        averageAgreement: null,
-                        canAnalyze: false
+                        status: statusData.status, completedAnnotators: statusData.completed_count,
+                        totalAnnotators: statusData.total_assigned, averageAgreement: null, canAnalyze: false
                     };
-                } catch (err) {
-                    console.error(`Failed to fetch adjacency status for room ${room.id}:`, err);
-                    analytics[room.id] = {
-                        status: 'Error',
-                        completedAnnotators: 0,
-                        totalAnnotators: 0,
-                        averageAgreement: null,
-                        canAnalyze: false
-                    };
+                } catch {
+                    analytics[room.id] = { status: 'Error', completedAnnotators: 0, totalAnnotators: 0, averageAgreement: null, canAnalyze: false };
                 }
             }
             setChatRoomAnalytics(analytics);
@@ -93,20 +96,13 @@ const AdminProjectPage = () => {
         }
 
         if (projectData?.annotation_type !== 'disentanglement') {
-            rooms.forEach((room) => {
-                analytics[room.id] = {
-                    status: 'N/A',
-                    completedAnnotators: 0,
-                    totalAnnotators: 0,
-                    averageAgreement: null,
-                    canAnalyze: false
-                };
+            rooms.forEach(room => {
+                analytics[room.id] = { status: 'N/A', completedAnnotators: 0, totalAnnotators: 0, averageAgreement: null, canAnalyze: false };
             });
             setChatRoomAnalytics(analytics);
             return;
         }
 
-        // Fetch IAA analysis for each chat room
         for (const room of rooms) {
             try {
                 const iaaData = await annotationsApi.getChatRoomIAA(room.id);
@@ -117,77 +113,60 @@ const AdminProjectPage = () => {
                     averageAgreement: calculateAverageAgreement(iaaData.pairwise_accuracies),
                     canAnalyze: iaaData.pairwise_accuracies.length > 0
                 };
-            } catch (err) {
-                console.error(`Failed to fetch IAA for room ${room.id}:`, err);
-                analytics[room.id] = {
-                    status: 'Error',
-                    completedAnnotators: 0,
-                    totalAnnotators: 0,
-                    averageAgreement: null,
-                    canAnalyze: false
-                };
+            } catch {
+                analytics[room.id] = { status: 'Error', completedAnnotators: 0, totalAnnotators: 0, averageAgreement: null, canAnalyze: false };
             }
         }
-        
         setChatRoomAnalytics(analytics);
     };
 
     const calculateAverageAgreement = (pairwiseAccuracies) => {
-        if (!pairwiseAccuracies || pairwiseAccuracies.length === 0) {
-            return null;
-        }
-        
+        if (!pairwiseAccuracies || pairwiseAccuracies.length === 0) return null;
         const sum = pairwiseAccuracies.reduce((acc, pair) => acc + pair.accuracy, 0);
         return (sum / pairwiseAccuracies.length).toFixed(1);
     };
 
-    useEffect(() => {
-        fetchData();
-    }, [fetchData]);
+    useEffect(() => { fetchData(); }, [fetchData]);
 
     useEffect(() => {
         const removeChatRoomId = location.state?.removeChatRoomId;
         const warningMessage = location.state?.warningMessage;
-        if (removeChatRoomId) {
-            removeChatRoomFromList(removeChatRoomId);
-        }
-        if (warningMessage) {
-            setError(warningMessage);
-        }
-        if (removeChatRoomId || warningMessage) {
-            navigate(location.pathname, { replace: true, state: {} });
-        }
+        if (removeChatRoomId) removeChatRoomFromList(removeChatRoomId);
+        if (warningMessage) setError(warningMessage);
+        if (removeChatRoomId || warningMessage) navigate(location.pathname, { replace: true, state: {} });
     }, [location.state, location.pathname, navigate]);
 
-    const handleRemoveUser = async (userId) => {
-        if (window.confirm('Are you sure you want to remove this user from the project?')) {
-            try {
-                await projectsApi.removeUser(projectId, userId);
-                fetchData(); // Refresh data after removal
-            } catch (err) {
-                console.error("Failed to remove user:", err);
-                setError(err.response?.data?.detail || 'Failed to remove user.');
+    // ── User management ───────────────────────────────────────────────────────
+    const handleRemoveUser = (userId, username) => {
+        openConfirm(
+            'Remove User',
+            `Remove "${username}" from this project?`,
+            async () => {
+                try {
+                    await projectsApi.removeUser(projectId, userId);
+                    fetchData();
+                    addToast(`User "${username}" removed from project.`, 'success');
+                } catch (err) {
+                    setError(err.response?.data?.detail || 'Failed to remove user.');
+                }
             }
-        }
+        );
     };
 
     const handleAssignUser = async (e) => {
         e.preventDefault();
-        if (!userToAssign) {
-            setError('Please select a user to assign.');
-            return;
-        }
+        if (!userToAssign) { setError('Please select a user to assign.'); return; }
         try {
             await projectsApi.assignUser(projectId, userToAssign);
             setUserToAssign('');
             setIsAssigning(false);
-            fetchData(); // Refresh data
+            fetchData();
         } catch (err) {
-            console.error("Failed to assign user:", err);
             setError(err.response?.data?.detail || 'Failed to assign user.');
         }
     };
 
+    // ── CSV import ────────────────────────────────────────────────────────────
     const handleFileSelect = (e) => {
         setSelectedFile(e.target.files[0]);
         setImportError(null);
@@ -196,17 +175,13 @@ const AdminProjectPage = () => {
     };
 
     const handlePreviewCsv = async () => {
-        if (!selectedFile) {
-            setPreviewError("Please select a file to preview.");
-            return;
-        }
+        if (!selectedFile) { setPreviewError('Please select a file to preview.'); return; }
         setIsPreviewing(true);
         setPreviewError(null);
         try {
             const preview = await projectsApi.previewImportCsv(projectId, selectedFile, 20);
             setImportPreview(preview);
         } catch (err) {
-            console.error(err);
             setPreviewError(err.message || 'Failed to preview CSV.');
         } finally {
             setIsPreviewing(false);
@@ -214,53 +189,49 @@ const AdminProjectPage = () => {
     };
 
     const handleUploadCsv = async () => {
-        if (!selectedFile) {
-            setImportError("Please select a file to upload.");
-            return;
-        }
+        if (!selectedFile) { setImportError('Please select a file to upload.'); return; }
         setIsUploading(true);
         setImportError(null);
         try {
-            const response = await projectsApi.importCsv(projectId, selectedFile, (progress) => {
-                console.log(`Upload Progress: ${progress}%`);
-            });
-            alert(`Import successful: ${response.import_details.imported_count} turns imported.`);
+            const response = await projectsApi.importCsv(projectId, selectedFile);
+            addToast(`Import successful: ${response.import_details.imported_count} turns imported.`, 'success');
             setSelectedFile(null);
             setImportPreview(null);
-            document.getElementById('csv-file-input').value = ''; // Clear file input
-            fetchData(); // Refresh chat room list
+            document.getElementById('csv-file-input').value = '';
+            fetchData();
         } catch (err) {
-            console.error(err);
             setImportError(err.message || 'Failed to import CSV.');
         } finally {
             setIsUploading(false);
         }
     };
 
-    const handleDeleteProject = async () => {
-        if (window.confirm(`Are you sure you want to permanently delete the project "${project.name}"? This action cannot be undone.`)) {
-            try {
-                await projectsApi.deleteProject(projectId);
-                alert('Project deleted successfully.');
-                navigate('/admin');
-            } catch (err) {
-                console.error("Failed to delete project:", err);
-                setError(err.response?.data?.detail || 'Failed to delete project.');
-            }
-        }
+    // ── Project management ────────────────────────────────────────────────────
+    const handleDeleteProject = () => {
+        openConfirm(
+            'Delete Project',
+            `Permanently delete "${project?.name}"? This removes all chat rooms, turns, and annotations and cannot be undone.`,
+            async () => {
+                try {
+                    await projectsApi.deleteProject(projectId);
+                    addToast('Project deleted successfully.', 'success');
+                    navigate('/admin');
+                } catch (err) {
+                    setError(err.response?.data?.detail || 'Failed to delete project.');
+                }
+            },
+            { confirmText: 'Delete Project' }
+        );
     };
 
     const handleUpdateRelationTypes = async (nextTypes) => {
         if (!project) return;
         setIsUpdatingProject(true);
         try {
-            const updated = await projectsApi.updateProject(projectId, {
-                relation_types: nextTypes
-            });
+            const updated = await projectsApi.updateProject(projectId, { relation_types: nextTypes });
             setProject(updated);
             setRelationTypes(updated.relation_types || []);
         } catch (err) {
-            console.error("Failed to update project:", err);
             setError(err.response?.data?.detail || 'Failed to update project.');
         } finally {
             setIsUpdatingProject(false);
@@ -270,8 +241,7 @@ const AdminProjectPage = () => {
     const handleAddRelationType = (e) => {
         e.preventDefault();
         const value = relationTypeInput.trim();
-        if (!value) return;
-        if (relationTypes.includes(value)) return;
+        if (!value || relationTypes.includes(value)) return;
         const nextTypes = [...relationTypes, value];
         setRelationTypes(nextTypes);
         handleUpdateRelationTypes(nextTypes);
@@ -279,7 +249,7 @@ const AdminProjectPage = () => {
     };
 
     const handleRemoveRelationType = (value) => {
-        const nextTypes = relationTypes.filter((item) => item !== value);
+        const nextTypes = relationTypes.filter(item => item !== value);
         setRelationTypes(nextTypes);
         handleUpdateRelationTypes(nextTypes);
     };
@@ -290,10 +260,7 @@ const AdminProjectPage = () => {
         handleUpdateRelationTypes(nextTypes);
     };
 
-    const handleDragStart = (index) => {
-        setDragIndex(index);
-    };
-
+    const handleDragStart = (index) => setDragIndex(index);
     const handleDrop = (index) => {
         if (dragIndex === null || dragIndex === index) return;
         const next = [...relationTypes];
@@ -308,64 +275,48 @@ const AdminProjectPage = () => {
         if (!project) return;
         setIsUpdatingProject(true);
         try {
-            const updated = await projectsApi.updateProject(projectId, {
-                description: descriptionDraft
-            });
+            const updated = await projectsApi.updateProject(projectId, { description: descriptionDraft });
             setProject(updated);
             setIsEditingDescription(false);
         } catch (err) {
-            console.error("Failed to update description:", err);
             setError(err.response?.data?.detail || 'Failed to update project.');
         } finally {
             setIsUpdatingProject(false);
         }
     };
 
+    // ── Export ────────────────────────────────────────────────────────────────
     const handleExportChatRoom = async (chatRoomId, chatRoomName, analytics) => {
-        try {
-            setError(null);
+        setError(null);
 
-            if (project.annotation_type === 'adjacency_pairs') {
-                setExportAnnotatorId('all');
-                setExportModal({ visible: true, roomId: chatRoomId, roomName: chatRoomName });
-                return;
-            }
-            
-            // Show confirmation for partial exports
-            if (analytics.status === 'Partial') {
-                const confirmed = window.confirm(
-                    `This chat room is only partially annotated (${analytics.completedAnnotators}/${analytics.totalAnnotators} annotators completed).\n\n` +
-                    `The exported data will be marked as PARTIAL and may not be suitable for final analysis.\n\n` +
-                    `Do you want to proceed with the export?`
-                );
-                if (!confirmed) {
-                    return;
-                }
-            } else if (analytics.status === 'NotEnoughData') {
-                const confirmed = window.confirm(
-                    `This chat room has insufficient annotation data (less than 2 completed annotators).\n\n` +
-                    `The exported data will be marked as INSUFFICIENT and is not suitable for analysis.\n\n` +
-                    `Do you want to proceed with the export?`
-                );
-                if (!confirmed) {
-                    return;
-                }
-            }
-            
+        if (project.annotation_type === 'adjacency_pairs') {
+            setExportAnnotatorId('all');
+            setExportModal({ visible: true, roomId: chatRoomId, roomName: chatRoomName });
+            return;
+        }
+
+        const doExport = async () => {
             await annotationsApi.exportChatRoom(chatRoomId);
-            
-            // Show success message based on completion status
-            if (analytics.status === 'Complete') {
-                alert('✅ Complete annotation data exported successfully!');
-            } else if (analytics.status === 'Partial') {
-                alert('⚠️ Partial annotation data exported. Check filename for completion percentage.');
-            } else {
-                alert('⚠️ Insufficient annotation data exported. This data is not suitable for analysis.');
-            }
-            
-        } catch (err) {
-            console.error("Failed to export chat room:", err);
-            setError(err.message || 'Failed to export chat room data.');
+            const label = analytics.status === 'Complete' ? 'Complete' : analytics.status === 'Partial' ? 'Partial' : 'Insufficient';
+            addToast(`${label} annotation data exported successfully.`, analytics.status === 'Complete' ? 'success' : 'warning');
+        };
+
+        if (analytics.status === 'Partial') {
+            openConfirm(
+                'Export Partial Data',
+                `This chat room is only partially annotated (${analytics.completedAnnotators}/${analytics.totalAnnotators} annotators completed). The exported data will be marked as PARTIAL. Proceed?`,
+                doExport,
+                { type: 'warning', confirmText: 'Export Anyway' }
+            );
+        } else if (analytics.status === 'NotEnoughData') {
+            openConfirm(
+                'Export Insufficient Data',
+                `This chat room has insufficient annotation data (less than 2 completed annotators). The data is not suitable for analysis. Proceed?`,
+                doExport,
+                { type: 'warning', confirmText: 'Export Anyway' }
+            );
+        } else {
+            try { await doExport(); } catch (err) { setError(err.message || 'Failed to export chat room data.'); }
         }
     };
 
@@ -378,26 +329,21 @@ const AdminProjectPage = () => {
             if (annotatorId == null) {
                 filenameOverride = `${safeRoomName}-all.zip`;
             } else {
-                const user = assignedUsers.find((u) => u.id === annotatorId);
+                const user = assignedUsers.find(u => u.id === annotatorId);
                 const username = user?.username || `user_${annotatorId}`;
-                const safeAnnotator = username.replace(/\s+/g, '-');
-                filenameOverride = `${safeRoomName}-${safeAnnotator}.txt`;
+                filenameOverride = `${safeRoomName}-${username.replace(/\s+/g, '-')}.txt`;
             }
             await adjacencyPairsApi.exportChatRoomPairs(exportModal.roomId, annotatorId, filenameOverride);
             setExportModal({ visible: false, roomId: null, roomName: '' });
         } catch (err) {
-            console.error("Failed to export adjacency pairs:", err);
             setError(err.message || 'Failed to export adjacency pairs.');
         }
     };
 
+    // ── Chat room management ──────────────────────────────────────────────────
     const removeChatRoomFromList = (chatRoomId) => {
-        setChatRooms((prev) => prev.filter((room) => room.id !== chatRoomId));
-        setChatRoomAnalytics((prev) => {
-            const updated = { ...prev };
-            delete updated[chatRoomId];
-            return updated;
-        });
+        setChatRooms(prev => prev.filter(room => room.id !== chatRoomId));
+        setChatRoomAnalytics(prev => { const updated = { ...prev }; delete updated[chatRoomId]; return updated; });
     };
 
     const handleViewChatRoom = async (chatRoomId) => {
@@ -405,26 +351,27 @@ const AdminProjectPage = () => {
             await projectsApi.getChatRoom(projectId, chatRoomId);
             navigate(`/admin/projects/${projectId}/chat-rooms/${chatRoomId}`);
         } catch (err) {
-            console.error("Failed to load chat room:", err);
             removeChatRoomFromList(chatRoomId);
             setError(err.response?.data?.detail || 'Failed to load chat room. It was removed from the list.');
         }
     };
 
-    const handleDeleteChatRoom = async (chatRoomId, chatRoomName) => {
-        const confirmed = window.confirm(
-            `Are you sure you want to delete the chat room "${chatRoomName}"?\n` +
-            `This will permanently remove all messages and annotations in this room.`
+    const handleDeleteChatRoom = (chatRoomId, chatRoomName) => {
+        openConfirm(
+            'Delete Chat Room',
+            `Delete "${chatRoomName}"? This will permanently remove all messages and annotations in this room.`,
+            async () => {
+                try {
+                    setError(null);
+                    await projectsApi.deleteChatRoom(chatRoomId);
+                    addToast(`Chat room "${chatRoomName}" deleted.`, 'success');
+                    fetchData();
+                } catch (err) {
+                    setError(err.response?.data?.detail || 'Failed to delete chat room.');
+                }
+            },
+            { confirmText: 'Delete Chat Room' }
         );
-        if (!confirmed) return;
-        try {
-            setError(null);
-            await projectsApi.deleteChatRoom(chatRoomId);
-            fetchData();
-        } catch (err) {
-            console.error("Failed to delete chat room:", err);
-            setError(err.response?.data?.detail || 'Failed to delete chat room.');
-        }
     };
 
     const handleOpenRenameChatRoom = (room) => {
@@ -434,25 +381,20 @@ const AdminProjectPage = () => {
     const handleRenameChatRoom = async () => {
         if (!editChatRoomModal.roomId) return;
         const nextName = editChatRoomModal.name.trim();
-        if (!nextName) {
-            setError('Chat room name cannot be empty.');
-            return;
-        }
+        if (!nextName) { setError('Chat room name cannot be empty.'); return; }
         setIsRenamingChatRoom(true);
         try {
             const updated = await projectsApi.updateChatRoom(editChatRoomModal.roomId, { name: nextName });
-            setChatRooms((prev) => prev.map((room) => (
-                room.id === updated.id ? { ...room, name: updated.name } : room
-            )));
+            setChatRooms(prev => prev.map(room => room.id === updated.id ? { ...room, name: updated.name } : room));
             setEditChatRoomModal({ open: false, roomId: null, name: '' });
         } catch (err) {
-            console.error('Failed to rename chat room:', err);
             setError(err.response?.data?.detail || 'Failed to rename chat room.');
         } finally {
             setIsRenamingChatRoom(false);
         }
     };
 
+    // ── Status badge ──────────────────────────────────────────────────────────
     const getStatusBadge = (status) => {
         const badges = {
             'Completed': { class: 'status-complete', text: 'Completed' },
@@ -464,103 +406,72 @@ const AdminProjectPage = () => {
             'Error': { class: 'status-error', text: 'Error' },
             'N/A': { class: 'status-unknown', text: 'N/A' }
         };
-        
         const badge = badges[status] || { class: 'status-unknown', text: 'Unknown' };
         return <span className={`status-badge ${badge.class}`}>{badge.text}</span>;
     };
 
-    if (loading) {
-        return <div className="loading-container">Loading project details...</div>;
-    }
+    // ── Render ─────────────────────────────────────────────────────────────────
+    if (loading) return <div className="loading-container">Loading project details...</div>;
+    if (!project) return <div>Project not found.</div>;
 
-    if (!project) {
-        return <div>Project not found.</div>;
-    }
-
-    const availableUsersToAssign = allUsers.filter(
-        (user) => !assignedUsers.some((assignedUser) => assignedUser.id === user.id)
-    );
+    const availableUsersToAssign = allUsers.filter(u => !assignedUsers.some(a => a.id === u.id));
 
     return (
         <div className="admin-project-page">
+            {/* Confirmation modal (replaces window.confirm) */}
+            <ConfirmationModal
+                isOpen={confirmModal.open}
+                onClose={closeConfirm}
+                onConfirm={() => { confirmModal.onConfirm?.(); closeConfirm(); }}
+                title={confirmModal.title}
+                message={confirmModal.message}
+                confirmText={confirmModal.confirmText}
+                type={confirmModal.type}
+            />
+
             <header className="page-header">
                 <button onClick={() => navigate('/admin')} className="back-button">Back to Dashboard</button>
                 <h1>Manage Project<br /><span className="project-name">{project.name}</span></h1>
             </header>
+
+            {/* Description */}
             <div className="management-section">
                 <div className="section-header">
                     <h2>Project Description</h2>
                     {!isEditingDescription && (
-                        <button
-                            className="icon-button"
-                            onClick={() => setIsEditingDescription(true)}
-                            title="Edit description"
-                        >
-                            Edit
-                        </button>
+                        <button className="icon-button" onClick={() => setIsEditingDescription(true)} title="Edit description">Edit</button>
                     )}
                 </div>
                 {!isEditingDescription ? (
                     <p className="project-description">{project.description || 'No description'}</p>
                 ) : (
                     <div className="project-description-edit">
-                        <textarea
-                            value={descriptionDraft}
-                            onChange={(e) => setDescriptionDraft(e.target.value)}
-                            rows={3}
-                        />
+                        <textarea value={descriptionDraft} onChange={e => setDescriptionDraft(e.target.value)} rows={3} />
                         <div className="description-actions">
-                            <button className="action-button" onClick={handleUpdateDescription} disabled={isUpdatingProject}>
-                                Save
-                            </button>
-                            <button
-                                className="action-button secondary"
-                                onClick={() => {
-                                    setDescriptionDraft(project.description || '');
-                                    setIsEditingDescription(false);
-                                }}
-                            >
-                                Cancel
-                            </button>
+                            <button className="action-button" onClick={handleUpdateDescription} disabled={isUpdatingProject}>Save</button>
+                            <button className="action-button secondary" onClick={() => { setDescriptionDraft(project.description || ''); setIsEditingDescription(false); }}>Cancel</button>
                         </div>
                     </div>
                 )}
             </div>
-            {error && (
-                <ErrorMessage
-                    type="warning"
-                    title="Warning"
-                    message={error}
-                />
-            )}
-            
+
+            {error && <ErrorMessage type="warning" title="Warning" message={error} />}
+
+            {/* Settings */}
             <div className="management-section">
-                <div className="section-header">
-                    <h2>Project Settings</h2>
-                </div>
+                <div className="section-header"><h2>Project Settings</h2></div>
                 <div className="settings-grid">
-                    <div>
-                        <strong>Annotation Type:</strong> {project.annotation_type === 'adjacency_pairs' ? 'Adjacency Pairs' : 'Chat Disentanglement'}
-                    </div>
+                    <div><strong>Annotation Type:</strong> {project.annotation_type === 'adjacency_pairs' ? 'Adjacency Pairs' : 'Chat Disentanglement'}</div>
                 </div>
                 {project.annotation_type === 'adjacency_pairs' && (
                     <div className="relation-types-editor">
                         <label>Relation Types</label>
                         <form onSubmit={handleAddRelationType} className="relation-input-row">
-                            <input
-                                type="text"
-                                value={relationTypeInput}
-                                onChange={(e) => setRelationTypeInput(e.target.value)}
-                                placeholder="Type a relation and press Enter"
-                            />
-                            <button type="submit" className="action-button secondary">
-                                Add
-                            </button>
+                            <input type="text" value={relationTypeInput} onChange={e => setRelationTypeInput(e.target.value)} placeholder="Type a relation and press Enter" />
+                            <button type="submit" className="action-button secondary">Add</button>
                         </form>
                         <div className="relation-types-actions">
-                            <button className="action-button secondary" onClick={handleSortRelationTypes}>
-                                Sort A-Z
-                            </button>
+                            <button className="action-button secondary" onClick={handleSortRelationTypes}>Sort A-Z</button>
                         </div>
                         <div className="relation-types-list">
                             {relationTypes.length === 0 ? (
@@ -572,18 +483,12 @@ const AdminProjectPage = () => {
                                         className="relation-type-tag"
                                         draggable
                                         onDragStart={() => handleDragStart(index)}
-                                        onDragOver={(e) => e.preventDefault()}
+                                        onDragOver={e => e.preventDefault()}
                                         onDrop={() => handleDrop(index)}
                                     >
                                         <span className="tag-handle">⋮⋮</span>
                                         <span className="tag-label">{type}</span>
-                                        <button
-                                            className="tag-remove"
-                                            onClick={() => handleRemoveRelationType(type)}
-                                            title="Remove"
-                                        >
-                                            ×
-                                        </button>
+                                        <button className="tag-remove" onClick={() => handleRemoveRelationType(type)} title="Remove">×</button>
                                     </div>
                                 ))
                             )}
@@ -591,7 +496,8 @@ const AdminProjectPage = () => {
                     </div>
                 )}
             </div>
-            
+
+            {/* Assigned Users */}
             <div className="management-section">
                 <div className="section-header">
                     <h2>Assigned Users ({assignedUsers.length})</h2>
@@ -599,46 +505,27 @@ const AdminProjectPage = () => {
                         {isAssigning ? 'Cancel' : '＋ Assign User'}
                     </button>
                 </div>
-
                 {isAssigning && (
                     <form onSubmit={handleAssignUser} className="assign-user-form">
-                        <select
-                            value={userToAssign}
-                            onChange={(e) => setUserToAssign(e.target.value)}
-                            required
-                        >
+                        <select value={userToAssign} onChange={e => setUserToAssign(e.target.value)} required>
                             <option value="">-- Select a user to assign --</option>
                             {availableUsersToAssign.map(user => (
-                                <option key={user.id} value={user.id}>
-                                    {user.username} ({user.is_admin ? 'Admin' : 'User'})
-                                </option>
+                                <option key={user.id} value={user.id}>{user.username} ({user.is_admin ? 'Admin' : 'User'})</option>
                             ))}
                         </select>
                         <button type="submit" className="action-button">Confirm Assignment</button>
                     </form>
                 )}
-
                 <div className="user-list">
                     <table>
-                        <thead>
-                            <tr>
-                                <th>User ID</th>
-                                <th>Username</th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
+                        <thead><tr><th>User ID</th><th>Username</th><th>Actions</th></tr></thead>
                         <tbody>
                             {assignedUsers.map(user => (
                                 <tr key={user.id}>
                                     <td>{user.id}</td>
                                     <td>{user.username}</td>
                                     <td>
-                                        <button 
-                                            onClick={() => handleRemoveUser(user.id)}
-                                            className="action-button delete"
-                                        >
-                                            Remove
-                                        </button>
+                                        <button onClick={() => handleRemoveUser(user.id, user.username)} className="action-button delete">Remove</button>
                                     </td>
                                 </tr>
                             ))}
@@ -646,12 +533,10 @@ const AdminProjectPage = () => {
                     </table>
                 </div>
             </div>
-            
-            <div className="management-section">
-                <div className="section-header">
-                    <h2>Chat Rooms ({chatRooms.length})</h2>
-                </div>
 
+            {/* Chat Rooms */}
+            <div className="management-section">
+                <div className="section-header"><h2>Chat Rooms ({chatRooms.length})</h2></div>
                 <div className="import-csv-section">
                     <h3>Import New Chat Room</h3>
                     <div className="import-csv-row">
@@ -663,38 +548,21 @@ const AdminProjectPage = () => {
                             {isUploading ? 'Uploading...' : 'Upload CSV'}
                         </button>
                     </div>
-                    {previewError && (
-                        <ErrorMessage
-                            type="warning"
-                            title="Preview Failed"
-                            message={previewError}
-                        />
-                    )}
+                    {previewError && <ErrorMessage type="warning" title="Preview Failed" message={previewError} />}
                     {importPreview && (
                         <div className="import-preview">
-                            <div className="import-preview-header">
-                                <strong>Total rows:</strong> {importPreview.total_rows}
-                            </div>
+                            <div className="import-preview-header"><strong>Total rows:</strong> {importPreview.total_rows}</div>
                             {importPreview.warnings?.length > 0 && (
                                 <div className="import-preview-warnings">
-                                    {importPreview.warnings.map((warning, index) => (
-                                        <div key={`warn-${index}`} className="preview-warning">{warning}</div>
-                                    ))}
+                                    {importPreview.warnings.map((w, i) => <div key={`warn-${i}`} className="preview-warning">{w}</div>)}
                                 </div>
                             )}
                             <div className="import-preview-table">
                                 <table>
-                                    <thead>
-                                        <tr>
-                                            <th>turn_id</th>
-                                            <th>user_id</th>
-                                            <th>turn_text</th>
-                                            <th>reply_to_turn</th>
-                                        </tr>
-                                    </thead>
+                                    <thead><tr><th>turn_id</th><th>user_id</th><th>turn_text</th><th>reply_to_turn</th></tr></thead>
                                     <tbody>
-                                        {importPreview.preview_rows.map((row, index) => (
-                                            <tr key={`preview-${index}`}>
+                                        {importPreview.preview_rows.map((row, i) => (
+                                            <tr key={`preview-${i}`}>
                                                 <td>{row.turn_id}</td>
                                                 <td>{row.user_id}</td>
                                                 <td className="preview-text-cell">{row.turn_text}</td>
@@ -706,13 +574,7 @@ const AdminProjectPage = () => {
                             </div>
                         </div>
                     )}
-                    {importError && (
-                        <ErrorMessage
-                            type="warning"
-                            title="Import Failed"
-                            message={importError}
-                        />
-                    )}
+                    {importError && <ErrorMessage type="warning" title="Import Failed" message={importError} />}
                 </div>
 
                 {chatRooms.length === 0 ? (
@@ -721,13 +583,7 @@ const AdminProjectPage = () => {
                     <div className="chat-rooms-table">
                         <table>
                             <thead>
-                                <tr>
-                                    <th>Chat Room</th>
-                                    <th>Status</th>
-                                    <th># Annotators</th>
-                                    <th>Avg. Agreement</th>
-                                    <th>Actions</th>
-                                </tr>
+                                <tr><th>Chat Room</th><th>Status</th><th># Annotators</th><th>Avg. Agreement</th><th>Actions</th></tr>
                             </thead>
                             <tbody>
                                 {chatRooms.map(room => {
@@ -735,57 +591,34 @@ const AdminProjectPage = () => {
                                     return (
                                         <tr key={room.id}>
                                             <td>
-                                                <strong>{room.name}</strong>
-                                                <br />
+                                                <strong>{room.name}</strong><br />
                                                 <small>Created: {new Date(room.created_at).toLocaleDateString()}</small>
                                             </td>
-                                            <td>
-                                                {getStatusBadge(analytics.status)}
-                                            </td>
-                                            <td>
-                                                {analytics.completedAnnotators || 0} / {analytics.totalAnnotators || 0}
-                                            </td>
-                                            <td>
-                                                {analytics.averageAgreement ? `${analytics.averageAgreement}%` : 'N/A'}
-                                            </td>
+                                            <td>{getStatusBadge(analytics.status)}</td>
+                                            <td>{analytics.completedAnnotators || 0} / {analytics.totalAnnotators || 0}</td>
+                                            <td>{analytics.averageAgreement ? `${analytics.averageAgreement}%` : 'N/A'}</td>
                                             <td className="actions-column">
                                                 <div className="action-button-group">
-                                                    <button
-                                                        onClick={() => handleViewChatRoom(room.id)}
-                                                        className="action-button view-button"
-                                                    >
-                                                        View Chat
-                                                    </button>
-                                                    <button
-                                                        onClick={() => handleOpenRenameChatRoom(room)}
-                                                        className="action-button"
-                                                    >
-                                                        Rename
-                                                    </button>
+                                                    <button onClick={() => handleViewChatRoom(room.id)} className="action-button view-button">View Chat</button>
+                                                    <button onClick={() => handleOpenRenameChatRoom(room)} className="action-button">Rename</button>
                                                     {project.annotation_type !== 'adjacency_pairs' && (
                                                         <button
                                                             onClick={() => navigate(`/admin/projects/${project.id}/analysis/${room.id}`)}
                                                             className="action-button analyze-button"
                                                             disabled={!chatRoomAnalytics[room.id]?.canAnalyze}
-                                                            title={!chatRoomAnalytics[room.id]?.canAnalyze ? "Not enough data for analysis" : "Analyze annotations"}
+                                                            title={!chatRoomAnalytics[room.id]?.canAnalyze ? 'Not enough data for analysis' : 'Analyze annotations'}
                                                         >
                                                             Analyze
                                                         </button>
                                                     )}
-                                                    <button 
+                                                    <button
                                                         onClick={() => handleExportChatRoom(room.id, room.name, chatRoomAnalytics[room.id])}
                                                         className="action-button export-button"
                                                         disabled={project.annotation_type !== 'adjacency_pairs' && !chatRoomAnalytics[room.id]?.canAnalyze}
-                                                        title={project.annotation_type === 'adjacency_pairs' ? "Export adjacency pairs" : (!chatRoomAnalytics[room.id]?.canAnalyze ? "Not enough data to export" : "Export annotations")}
                                                     >
                                                         Export
                                                     </button>
-                                                    <button
-                                                        onClick={() => handleDeleteChatRoom(room.id, room.name)}
-                                                        className="action-button delete"
-                                                    >
-                                                        Delete
-                                                    </button>
+                                                    <button onClick={() => handleDeleteChatRoom(room.id, room.name)} className="action-button delete">Delete</button>
                                                 </div>
                                             </td>
                                         </tr>
@@ -795,100 +628,60 @@ const AdminProjectPage = () => {
                         </table>
                     </div>
                 )}
-                
-                {/* Status Legend */}
+
                 {chatRooms.length > 0 && project.annotation_type === 'disentanglement' && (
                     <div className="status-legend">
                         <h4>Status Legend:</h4>
                         <div className="legend-items">
-                            <div className="legend-item">
-                                <span className="status-badge status-complete">Annotated</span>
-                                <span className="legend-text">All annotators completed all messages</span>
-                            </div>
-                            <div className="legend-item">
-                                <span className="status-badge status-partial">In Progress</span>
-                                <span className="legend-text">2+ annotators completed, but others still pending</span>
-                            </div>
-                            <div className="legend-item">
-                                <span className="status-badge status-insufficient">Insufficient Data</span>
-                                <span className="legend-text">Less than 2 annotators completed all messages</span>
-                            </div>
+                            <div className="legend-item"><span className="status-badge status-complete">Annotated</span><span className="legend-text">All annotators completed all messages</span></div>
+                            <div className="legend-item"><span className="status-badge status-partial">In Progress</span><span className="legend-text">2+ annotators completed, but others still pending</span></div>
+                            <div className="legend-item"><span className="status-badge status-insufficient">Insufficient Data</span><span className="legend-text">Less than 2 annotators completed all messages</span></div>
                         </div>
                     </div>
                 )}
             </div>
 
-            <Modal
-                isOpen={exportModal.visible}
-                onClose={() => setExportModal({ visible: false, roomId: null, roomName: '' })}
-                title="Export Adjacency Pairs"
-                size="small"
-            >
+            {/* Export adjacency pairs modal */}
+            <Modal isOpen={exportModal.visible} onClose={() => setExportModal({ visible: false, roomId: null, roomName: '' })} title="Export Adjacency Pairs" size="small">
                 <div className="export-modal-content">
                     <label>Export scope</label>
-                    <select
-                        value={exportAnnotatorId}
-                        onChange={(e) => setExportAnnotatorId(e.target.value)}
-                    >
+                    <select value={exportAnnotatorId} onChange={e => setExportAnnotatorId(e.target.value)}>
                         <option value="all">All users</option>
-                        {assignedUsers.map((user) => (
-                            <option key={user.id} value={user.id}>
-                                {user.username}
-                            </option>
-                        ))}
+                        {assignedUsers.map(user => <option key={user.id} value={user.id}>{user.username}</option>)}
                     </select>
-                    <button className="action-button export-button" onClick={handleExportAdjacencyPairs}>
-                        Export
-                    </button>
+                    <button className="action-button export-button" onClick={handleExportAdjacencyPairs}>Export</button>
                 </div>
             </Modal>
 
-            <Modal
-                isOpen={editChatRoomModal.open}
-                onClose={() => setEditChatRoomModal({ open: false, roomId: null, name: '' })}
-                title="Rename chat room"
-                size="small"
-            >
+            {/* Rename chat room modal */}
+            <Modal isOpen={editChatRoomModal.open} onClose={() => setEditChatRoomModal({ open: false, roomId: null, name: '' })} title="Rename chat room" size="small">
                 <div className="rename-chat-room">
                     <label htmlFor="chat-room-name" className="form-label">Name</label>
                     <input
                         id="chat-room-name"
                         type="text"
                         value={editChatRoomModal.name}
-                        onChange={(e) => setEditChatRoomModal((prev) => ({ ...prev, name: e.target.value }))}
+                        onChange={e => setEditChatRoomModal(prev => ({ ...prev, name: e.target.value }))}
                         className="form-input"
                         placeholder="New chat room name"
                         disabled={isRenamingChatRoom}
                     />
                     <div className="modal-actions">
-                        <button
-                            className="action-button secondary"
-                            onClick={() => setEditChatRoomModal({ open: false, roomId: null, name: '' })}
-                            disabled={isRenamingChatRoom}
-                        >
-                            Cancel
-                        </button>
-                        <button
-                            className="action-button"
-                            onClick={handleRenameChatRoom}
-                            disabled={isRenamingChatRoom}
-                        >
+                        <button className="action-button secondary" onClick={() => setEditChatRoomModal({ open: false, roomId: null, name: '' })} disabled={isRenamingChatRoom}>Cancel</button>
+                        <button className="action-button" onClick={handleRenameChatRoom} disabled={isRenamingChatRoom}>
                             {isRenamingChatRoom ? 'Saving...' : 'Save'}
                         </button>
                     </div>
                 </div>
             </Modal>
-            
+
+            {/* Danger zone */}
             <div className="management-section danger-zone">
                 <h2>Danger Zone</h2>
                 <div className="danger-zone-content">
-                    <p>
-                        Deleting a project is a permanent action. It will remove the project, all its chat rooms, turns, and annotations.
-                    </p>
+                    <p>Deleting a project is a permanent action. It will remove the project, all its chat rooms, turns, and annotations.</p>
                     <div className="danger-zone-actions">
-                        <button onClick={handleDeleteProject} className="action-button delete">
-                            Delete This Project
-                        </button>
+                        <button onClick={handleDeleteProject} className="action-button delete">Delete This Project</button>
                     </div>
                 </div>
             </div>
@@ -896,5 +689,4 @@ const AdminProjectPage = () => {
     );
 };
 
-export default AdminProjectPage; 
-
+export default AdminProjectPage;

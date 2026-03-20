@@ -1,10 +1,20 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { BrowserRouter as Router } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import './index.css';
 import App from './App';
 import { AuthProvider } from './contexts/AuthContext';
-import reportWebVitals from './reportWebVitals';
+import { ToastProvider } from './contexts/ToastContext';
+
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      retry: 1,
+      staleTime: 30_000,
+    },
+  },
+});
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
 
@@ -12,9 +22,13 @@ try {
   root.render(
     <React.StrictMode>
       <Router>
-        <AuthProvider>
-          <App />
-        </AuthProvider>
+        <QueryClientProvider client={queryClient}>
+          <ToastProvider>
+            <AuthProvider>
+              <App />
+            </AuthProvider>
+          </ToastProvider>
+        </QueryClientProvider>
       </Router>
     </React.StrictMode>
   );
@@ -22,6 +36,3 @@ try {
   console.error('Error rendering the app:', error);
   document.body.innerHTML = '<h1>An error occurred while loading the application. Please check the console for more details.</h1>';
 }
-
-// If you want to start measuring performance in your app, pass a function
-// ... existing code ...
