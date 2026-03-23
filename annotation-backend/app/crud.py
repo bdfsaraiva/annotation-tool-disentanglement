@@ -57,7 +57,8 @@ def create_project(db: Session, project: schemas.ProjectCreate) -> models.Projec
         name=project.name,
         description=project.description,
         annotation_type=project.annotation_type,
-        relation_types=project.relation_types
+        relation_types=project.relation_types,
+        iaa_alpha=project.iaa_alpha,
     )
     db.add(db_project)
     db.commit()
@@ -73,6 +74,8 @@ def update_project(db: Session, project: models.Project, updates: schemas.Projec
         project.annotation_type = updates.annotation_type
     if updates.relation_types is not None:
         project.relation_types = updates.relation_types
+    if updates.iaa_alpha is not None:
+        project.iaa_alpha = updates.iaa_alpha
     db.commit()
     db.refresh(project)
     return project
@@ -669,6 +672,44 @@ def import_batch_annotations_for_chat_room(
 
 # PHASE 5: INTER-ANNOTATOR AGREEMENT (IAA) FUNCTIONS
 
+def _calculate_adj_pairs_iaa(
+    pairs_a: List[Tuple[int, int, str]],
+    pairs_b: List[Tuple[int, int, str]],
+    alpha: float,
+) -> dict:
+    """
+    Calculate the adjacency-pairs IAA between two annotators.
+
+    Each pair is a (from_message_id, to_message_id, relation_type) tuple.
+
+    Returns a dict with link_f1, type_accuracy, agreed_links_count, combined_iaa.
+    """
+    links_a = {(p[0], p[1]) for p in pairs_a}
+    links_b = {(p[0], p[1]) for p in pairs_b}
+    agreed_links = links_a & links_b
+    agreed_count = len(agreed_links)
+
+    denom = len(links_a) + len(links_b)
+    link_f1 = 2 * agreed_count / denom if denom > 0 else 0.0
+
+    if agreed_count == 0:
+        type_acc = 0.0
+    else:
+        type_a = {(p[0], p[1]): p[2] for p in pairs_a}
+        type_b = {(p[0], p[1]): p[2] for p in pairs_b}
+        matching = sum(1 for link in agreed_links if type_a[link] == type_b[link])
+        type_acc = matching / agreed_count
+
+    combined_iaa = link_f1 * (alpha + (1 - alpha) * type_acc)
+
+    return {
+        "link_f1": link_f1,
+        "type_accuracy": type_acc,
+        "agreed_links_count": agreed_count,
+        "combined_iaa": combined_iaa,
+    }
+
+
 def _calculate_one_to_one_accuracy(annot1: List[str], annot2: List[str]) -> float:
     """
     Computes the one-to-one accuracy metric for two lists of annotations.
@@ -718,137 +759,243 @@ def _calculate_one_to_one_accuracy(annot1: List[str], annot2: List[str]) -> floa
     return accuracy
 
 
-def get_chat_room_iaa_analysis(db: Session, chat_room_id: int) -> Optional[schemas.ChatRoomIAA]:
+def get_chat_room_iaa_analysis(
+    db: Session,
+    chat_room_id: int,
+    alpha_override: Optional[float] = None,
+) -> schemas.ChatRoomIAA:
     """
-    Calculates and returns the Inter-Annotator Agreement (IAA) analysis for a chat room.
-    
-    This function now supports partial analysis:
-    1. Verifies the chat room exists
-    2. Identifies annotators who have completed annotating all messages
-    3. If 2+ annotators have completed work, calculates IAA for that subset
-    4. Returns analysis with clear status and annotator information
-    
-    Args:
-        db: Database session
-        chat_room_id: ID of the chat room to analyze
-        
-    Returns:
-        ChatRoomIAA schema with analysis (complete, partial, or insufficient data)
+    Calculates and returns the IAA analysis for a chat room.
+
+    For disentanglement projects: uses one-to-one accuracy on thread labels.
+    For adjacency_pairs projects: uses LinkF1 × (α + (1-α) × TypeAcc).
+
+    alpha_override lets the admin recompute with a different alpha without
+    permanently saving it; if None the project's stored iaa_alpha is used.
     """
-    # Get chat room
     chat_room = get_chat_room(db, chat_room_id)
     if not chat_room:
         raise HTTPException(status_code=404, detail="Chat room not found")
-    
-    # Get all messages in the chat room
+
+    project = get_project(db, chat_room.project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
     messages = get_chat_messages_by_room(db, chat_room_id, skip=0, limit=10000)
     message_count = len(messages)
-    
+
     if message_count == 0:
         raise HTTPException(status_code=400, detail="Chat room has no messages")
-    
-    # Get all users assigned to this project (potential annotators)
+
     assigned_users = (
         db.query(models.User)
         .join(models.ProjectAssignment, models.User.id == models.ProjectAssignment.user_id)
         .filter(models.ProjectAssignment.project_id == chat_room.project_id)
         .all()
     )
-    
-    # Get all annotations for this chat room with annotator information
+    total_assigned = len(assigned_users)
+
+    if project.annotation_type == "adjacency_pairs":
+        return _get_adj_pairs_iaa(
+            db=db,
+            chat_room_id=chat_room_id,
+            chat_room=chat_room,
+            project=project,
+            assigned_users=assigned_users,
+            message_count=message_count,
+            alpha_override=alpha_override,
+        )
+
+    # ── Disentanglement mode ─────────────────────────────────────────────────
     annotations_query = (
-        db.query(models.Annotation, models.User.username, models.ChatMessage.turn_id)
+        db.query(models.Annotation, models.User.username)
         .join(models.ChatMessage, models.Annotation.message_id == models.ChatMessage.id)
         .join(models.User, models.Annotation.annotator_id == models.User.id)
         .filter(models.ChatMessage.chat_room_id == chat_room_id)
         .order_by(models.ChatMessage.id, models.Annotation.annotator_id)
         .all()
     )
-    
-    # Group annotations by annotator
-    annotator_data = {}
-    for annotation, username, turn_id in annotations_query:
+
+    annotator_data: dict = {}
+    for annotation, username in annotations_query:
         annotator_id = annotation.annotator_id
         if annotator_id not in annotator_data:
-            annotator_data[annotator_id] = {
-                'username': username,
-                'annotations': {}
-            }
-        annotator_data[annotator_id]['annotations'][annotation.message_id] = annotation.thread_id
-    
-    # Identify completed and pending annotators
+            annotator_data[annotator_id] = {"username": username, "annotations": {}}
+        annotator_data[annotator_id]["annotations"][annotation.message_id] = annotation.thread_id
+
     completed_annotators = []
     pending_annotators = []
-    
     for user in assigned_users:
-        if user.id in annotator_data:
-            # Check if this annotator has annotated all messages
-            if len(annotator_data[user.id]['annotations']) == message_count:
-                completed_annotators.append(schemas.AnnotatorInfo(id=user.id, username=user.username))
-            else:
-                pending_annotators.append(schemas.AnnotatorInfo(id=user.id, username=user.username))
+        if user.id in annotator_data and len(annotator_data[user.id]["annotations"]) == message_count:
+            completed_annotators.append(schemas.AnnotatorInfo(id=user.id, username=user.username))
         else:
-            # User hasn't started annotating
             pending_annotators.append(schemas.AnnotatorInfo(id=user.id, username=user.username))
-    
-    # Determine analysis status
+
     completed_count = len(completed_annotators)
-    total_assigned = len(assigned_users)
-    
+
     if completed_count < 2:
-        # Not enough completed annotators for analysis
         return schemas.ChatRoomIAA(
             chat_room_id=chat_room_id,
             chat_room_name=chat_room.name,
             message_count=message_count,
+            annotation_type="disentanglement",
             analysis_status="NotEnoughData",
             total_annotators_assigned=total_assigned,
             completed_annotators=completed_annotators,
             pending_annotators=pending_annotators,
-            pairwise_accuracies=[]
+            pairwise_accuracies=[],
         )
-    
-    # We have enough completed annotators - calculate IAA for completed subset
+
     analysis_status = "Complete" if completed_count == total_assigned else "Partial"
-    
-    # Create ordered annotation lists for completed annotators only
     message_ids = [msg.id for msg in messages]
-    completed_annotator_lists = {}
-    
-    for completed_annotator in completed_annotators:
-        annotator_id = completed_annotator.id
-        completed_annotator_lists[annotator_id] = {
-            'username': completed_annotator.username,
-            'annotations': [annotator_data[annotator_id]['annotations'][msg_id] for msg_id in message_ids]
+    completed_annotator_lists = {
+        a.id: {
+            "username": a.username,
+            "annotations": [annotator_data[a.id]["annotations"][msg_id] for msg_id in message_ids],
         }
-    
-    # Calculate pairwise accuracies for completed annotators
+        for a in completed_annotators
+    }
+
     pairwise_accuracies = []
-    completed_annotator_ids = list(completed_annotator_lists.keys())
-    
-    for annotator_1_id, annotator_2_id in combinations(completed_annotator_ids, 2):
-        annot1 = completed_annotator_lists[annotator_1_id]['annotations']
-        annot2 = completed_annotator_lists[annotator_2_id]['annotations']
-        
-        accuracy = _calculate_one_to_one_accuracy(annot1, annot2)
-        
+    for id1, id2 in combinations(list(completed_annotator_lists.keys()), 2):
+        accuracy = _calculate_one_to_one_accuracy(
+            completed_annotator_lists[id1]["annotations"],
+            completed_annotator_lists[id2]["annotations"],
+        )
         pairwise_accuracies.append(schemas.PairwiseAccuracy(
-            annotator_1_id=annotator_1_id,
-            annotator_2_id=annotator_2_id,
-            annotator_1_username=completed_annotator_lists[annotator_1_id]['username'],
-            annotator_2_username=completed_annotator_lists[annotator_2_id]['username'],
-            accuracy=accuracy
+            annotator_1_id=id1,
+            annotator_2_id=id2,
+            annotator_1_username=completed_annotator_lists[id1]["username"],
+            annotator_2_username=completed_annotator_lists[id2]["username"],
+            accuracy=accuracy,
         ))
-    
+
     return schemas.ChatRoomIAA(
         chat_room_id=chat_room_id,
         chat_room_name=chat_room.name,
         message_count=message_count,
+        annotation_type="disentanglement",
         analysis_status=analysis_status,
         total_annotators_assigned=total_assigned,
         completed_annotators=completed_annotators,
         pending_annotators=pending_annotators,
-        pairwise_accuracies=pairwise_accuracies
+        pairwise_accuracies=pairwise_accuracies,
+    )
+
+
+def _get_adj_pairs_iaa(
+    db: Session,
+    chat_room_id: int,
+    chat_room,
+    project,
+    assigned_users: list,
+    message_count: int,
+    alpha_override: Optional[float],
+) -> schemas.ChatRoomIAA:
+    """IAA calculation for adjacency_pairs projects."""
+    alpha = alpha_override if alpha_override is not None else project.iaa_alpha
+    total_assigned = len(assigned_users)
+
+    # Completion is tracked via ChatRoomCompletion (explicit mark by annotator)
+    completed_user_ids = {
+        row.annotator_id
+        for row in db.query(models.ChatRoomCompletion.annotator_id)
+        .filter(
+            models.ChatRoomCompletion.chat_room_id == chat_room_id,
+            models.ChatRoomCompletion.is_completed == True,
+        )
+        .all()
+    }
+
+    assigned_user_map = {u.id: u.username for u in assigned_users}
+    completed_annotators = [
+        schemas.AnnotatorInfo(id=uid, username=assigned_user_map[uid])
+        for uid in completed_user_ids
+        if uid in assigned_user_map
+    ]
+    pending_annotators = [
+        schemas.AnnotatorInfo(id=u.id, username=u.username)
+        for u in assigned_users
+        if u.id not in completed_user_ids
+    ]
+    completed_count = len(completed_annotators)
+
+    not_enough = schemas.ChatRoomIAA(
+        chat_room_id=chat_room_id,
+        chat_room_name=chat_room.name,
+        message_count=message_count,
+        annotation_type="adjacency_pairs",
+        analysis_status="NotEnoughData",
+        total_annotators_assigned=total_assigned,
+        completed_annotators=completed_annotators,
+        pending_annotators=pending_annotators,
+        iaa_alpha=alpha,
+        pairwise_adj_iaa=[],
+    )
+
+    if completed_count < 2:
+        return not_enough
+
+    # Load all adjacency pairs for this room belonging to completed annotators
+    pairs_query = (
+        db.query(
+            models.AdjacencyPair.annotator_id,
+            models.User.username,
+            models.AdjacencyPair.from_message_id,
+            models.AdjacencyPair.to_message_id,
+            models.AdjacencyPair.relation_type,
+        )
+        .join(models.ChatMessage, models.AdjacencyPair.from_message_id == models.ChatMessage.id)
+        .join(models.User, models.AdjacencyPair.annotator_id == models.User.id)
+        .filter(
+            models.ChatMessage.chat_room_id == chat_room_id,
+            models.AdjacencyPair.annotator_id.in_(completed_user_ids),
+        )
+        .all()
+    )
+
+    # Group pairs by annotator: id -> list of (from_id, to_id, relation_type)
+    annotator_pairs: dict = {}
+    annotator_username: dict = {}
+    for ann_id, username, from_id, to_id, rel_type in pairs_query:
+        annotator_pairs.setdefault(ann_id, []).append((from_id, to_id, rel_type))
+        annotator_username[ann_id] = username
+
+    # Ensure every completed annotator appears (even with 0 pairs)
+    for a in completed_annotators:
+        annotator_pairs.setdefault(a.id, [])
+        annotator_username.setdefault(a.id, a.username)
+
+    analysis_status = "Complete" if completed_count == total_assigned else "Partial"
+    pairwise_adj_iaa = []
+
+    for id1, id2 in combinations([a.id for a in completed_annotators], 2):
+        result = _calculate_adj_pairs_iaa(
+            annotator_pairs[id1], annotator_pairs[id2], alpha
+        )
+        pairwise_adj_iaa.append(schemas.PairwiseAdjIAA(
+            annotator_1_id=id1,
+            annotator_2_id=id2,
+            annotator_1_username=annotator_username[id1],
+            annotator_2_username=annotator_username[id2],
+            link_f1=result["link_f1"],
+            type_accuracy=result["type_accuracy"],
+            agreed_links_count=result["agreed_links_count"],
+            combined_iaa=result["combined_iaa"],
+            iaa_alpha=alpha,
+        ))
+
+    return schemas.ChatRoomIAA(
+        chat_room_id=chat_room_id,
+        chat_room_name=chat_room.name,
+        message_count=message_count,
+        annotation_type="adjacency_pairs",
+        analysis_status=analysis_status,
+        total_annotators_assigned=total_assigned,
+        completed_annotators=completed_annotators,
+        pending_annotators=pending_annotators,
+        iaa_alpha=alpha,
+        pairwise_adj_iaa=pairwise_adj_iaa,
     )
 
 

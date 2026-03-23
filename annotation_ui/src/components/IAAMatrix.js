@@ -1,40 +1,38 @@
 import React from 'react';
 import './IAAMatrix.css';
 
-const IAAMatrix = ({ pairwiseAccuracies, annotators }) => {
+const IAAMatrix = ({ pairwiseAccuracies, annotators, isAdjPairs = false }) => {
     // Create a lookup map for quick access to accuracy scores
     const accuracyMap = new Map();
     pairwiseAccuracies.forEach(pair => {
         const key1 = `${pair.annotator_1_id}-${pair.annotator_2_id}`;
         const key2 = `${pair.annotator_2_id}-${pair.annotator_1_id}`;
-        accuracyMap.set(key1, pair.accuracy);
-        accuracyMap.set(key2, pair.accuracy);
+        accuracyMap.set(key1, pair);
+        accuracyMap.set(key2, pair);
     });
 
     // Helper function to get accuracy between two annotators
+    const getPair = (annotatorId1, annotatorId2) => {
+        if (annotatorId1 === annotatorId2) return { accuracy: 100, _self: true };
+        return accuracyMap.get(`${annotatorId1}-${annotatorId2}`) || null;
+    };
+
     const getAccuracy = (annotatorId1, annotatorId2) => {
-        if (annotatorId1 === annotatorId2) return 100; // Perfect agreement with self
-        const key = `${annotatorId1}-${annotatorId2}`;
-        return accuracyMap.get(key) || null;
+        const pair = getPair(annotatorId1, annotatorId2);
+        return pair ? pair.accuracy : null;
     };
 
-    // Helper function to get color based on accuracy score
+    // Color scale: dark enough for white text to be readable
     const getColor = (accuracy) => {
-        if (accuracy === null) return '#f8f9fa'; // Light gray for no data
-        if (accuracy === 100) return '#e8f5e8'; // Light green for self-comparison
-        
-        // Color scale from red (low agreement) to green (high agreement)
-        const hue = (accuracy / 100) * 120; // 0 = red, 120 = green
-        const saturation = 70;
-        const lightness = 85;
-        return `hsl(${hue}, ${saturation}%, ${lightness}%)`;
+        if (accuracy === null) return 'var(--background-color-tertiary, #f0f0f0)';
+        if (accuracy === 100) return '#2e7d32'; // self-cell: solid dark green
+        const hue = (accuracy / 100) * 120; // 0=red → 120=green
+        return `hsl(${hue}, 65%, 38%)`;
     };
 
-    // Helper function to get text color for readability
     const getTextColor = (accuracy) => {
-        if (accuracy === null) return '#6c757d';
-        if (accuracy === 100) return '#28a745';
-        return accuracy > 50 ? '#155724' : '#721c24';
+        if (accuracy === null) return 'var(--text-color-secondary, #888)';
+        return '#ffffff'; // white text on all coloured cells
     };
 
     return (
@@ -61,31 +59,50 @@ const IAAMatrix = ({ pairwiseAccuracies, annotators }) => {
                                 </div>
                             </td>
                             {annotators.map(colAnnotator => {
-                                const accuracy = getAccuracy(rowAnnotator.id, colAnnotator.id);
-                                const isUpperTriangle = annotators.findIndex(a => a.id === rowAnnotator.id) < 
+                                const pair = getPair(rowAnnotator.id, colAnnotator.id);
+                                const accuracy = pair ? pair.accuracy : null;
+                                const isUpperTriangle = annotators.findIndex(a => a.id === rowAnnotator.id) <
                                                        annotators.findIndex(a => a.id === colAnnotator.id);
                                 const isSelf = rowAnnotator.id === colAnnotator.id;
-                                
+
+                                let tooltipText;
+                                if (isSelf) {
+                                    tooltipText = `${rowAnnotator.username} (self)`;
+                                } else if (pair && isAdjPairs) {
+                                    tooltipText = [
+                                        `${rowAnnotator.username} vs ${colAnnotator.username}`,
+                                        `Combined IAA : ${(pair._combined_iaa ?? pair._link_f1)?.toFixed(3)}  (α=${pair._alpha})`,
+                                        `Link F1      : ${pair._link_f1?.toFixed(3)}`,
+                                        `Type Accuracy: ${pair._type_accuracy?.toFixed(3)}`,
+                                        `Agreed links : ${pair._agreed_links}`,
+                                    ].join('\n');
+                                } else if (accuracy !== null) {
+                                    tooltipText = `${rowAnnotator.username} vs ${colAnnotator.username}: ${accuracy.toFixed(1)}%`;
+                                } else {
+                                    tooltipText = 'No data available';
+                                }
+
+                                let displayValue = null;
+                                if (!isSelf && accuracy !== null) {
+                                    displayValue = isAdjPairs
+                                        ? (pair.accuracy / 100).toFixed(3)
+                                        : `${accuracy.toFixed(1)}%`;
+                                }
+
                                 return (
-                                    <td 
-                                        key={colAnnotator.id} 
+                                    <td
+                                        key={colAnnotator.id}
                                         className={`matrix-cell ${isSelf ? 'self-cell' : ''} ${isUpperTriangle ? 'upper-triangle' : ''}`}
-                                        style={{ 
+                                        style={{
                                             backgroundColor: getColor(accuracy),
                                             color: getTextColor(accuracy)
                                         }}
-                                        title={
-                                            isSelf 
-                                                ? `${rowAnnotator.username} (self)`
-                                                : accuracy !== null 
-                                                    ? `${rowAnnotator.username} vs ${colAnnotator.username}: ${accuracy.toFixed(1)}%`
-                                                    : 'No data available'
-                                        }
+                                        title={tooltipText}
                                     >
                                         {isSelf ? (
                                             <span className="self-indicator">—</span>
-                                        ) : accuracy !== null ? (
-                                            <span className="accuracy-value">{accuracy.toFixed(1)}%</span>
+                                        ) : displayValue !== null ? (
+                                            <span className="accuracy-value">{displayValue}</span>
                                         ) : (
                                             <span className="no-data">—</span>
                                         )}
@@ -101,25 +118,26 @@ const IAAMatrix = ({ pairwiseAccuracies, annotators }) => {
                 <h4>Legend</h4>
                 <div className="legend-items">
                     <div className="legend-item">
-                        <div className="legend-color" style={{ backgroundColor: '#f8d7da' }}></div>
-                        <span>Low Agreement (0-50%)</span>
+                        <div className="legend-color" style={{ backgroundColor: 'hsl(0,65%,38%)' }}></div>
+                        <span>Low (0–50%)</span>
                     </div>
                     <div className="legend-item">
-                        <div className="legend-color" style={{ backgroundColor: '#fff3cd' }}></div>
-                        <span>Medium Agreement (50-75%)</span>
+                        <div className="legend-color" style={{ backgroundColor: 'hsl(60,65%,38%)' }}></div>
+                        <span>Medium (50–75%)</span>
                     </div>
                     <div className="legend-item">
-                        <div className="legend-color" style={{ backgroundColor: '#d4edda' }}></div>
-                        <span>High Agreement (75-100%)</span>
+                        <div className="legend-color" style={{ backgroundColor: 'hsl(100,65%,38%)' }}></div>
+                        <span>High (75–100%)</span>
                     </div>
                     <div className="legend-item">
-                        <div className="legend-color" style={{ backgroundColor: '#e8f5e8' }}></div>
+                        <div className="legend-color" style={{ backgroundColor: '#2e7d32' }}></div>
                         <span>Self-comparison</span>
                     </div>
                 </div>
                 <p className="legend-note">
-                    <strong>Note:</strong> The matrix shows agreement scores between each pair of annotators. 
-                    Higher percentages indicate better agreement on thread assignments.
+                    <strong>Note:</strong> {isAdjPairs
+                        ? 'Cells show Combined IAA (0–1). Hover for Link F1, Type Accuracy, and agreed link count.'
+                        : 'Higher percentages indicate better agreement on thread assignments.'}
                 </p>
             </div>
         </div>

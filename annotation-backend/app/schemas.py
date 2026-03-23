@@ -29,6 +29,7 @@ class ProjectBase(BaseModel):
     description: Optional[str] = None
     annotation_type: str = Field(default="disentanglement")
     relation_types: List[str] = Field(default_factory=list)
+    iaa_alpha: float = Field(default=0.8, ge=0.0, le=1.0)
 
 class ProjectCreate(ProjectBase):
     pass
@@ -49,6 +50,7 @@ class ProjectUpdate(BaseModel):
     description: Optional[str] = None
     annotation_type: Optional[str] = None
     relation_types: Optional[List[str]] = None
+    iaa_alpha: Optional[float] = Field(default=None, ge=0.0, le=1.0)
 
 # Chat Room Schemas
 class ChatRoomBase(BaseModel):
@@ -302,6 +304,18 @@ class PairwiseAccuracy(BaseModel):
     annotator_2_username: str
     accuracy: float
 
+class PairwiseAdjIAA(BaseModel):
+    """Represents the combined IAA score for adjacency pairs between two annotators."""
+    annotator_1_id: int
+    annotator_2_id: int
+    annotator_1_username: str
+    annotator_2_username: str
+    link_f1: float
+    type_accuracy: float
+    agreed_links_count: int
+    combined_iaa: float
+    iaa_alpha: float
+
 class AnnotatorInfo(BaseModel):
     """Information about an annotator."""
     id: int
@@ -325,13 +339,18 @@ class ChatRoomIAA(BaseModel):
     chat_room_id: int
     chat_room_name: str
     message_count: int
-    
-    # New fields for clarity and partial analysis support
-    analysis_status: str  # "Complete", "Partial", "NotEnoughData"
-    
+    annotation_type: str  # "disentanglement" or "adjacency_pairs"
+
+    # "Complete", "Partial", "NotEnoughData"
+    analysis_status: str
+
     total_annotators_assigned: int
     completed_annotators: List[AnnotatorInfo]
     pending_annotators: List[AnnotatorInfo]
-    
-    # Calculation is now based on completed_annotators
-    pairwise_accuracies: List[PairwiseAccuracy] 
+
+    # Disentanglement mode
+    pairwise_accuracies: List[PairwiseAccuracy] = []
+
+    # Adjacency pairs mode
+    iaa_alpha: Optional[float] = None
+    pairwise_adj_iaa: List[PairwiseAdjIAA] = []

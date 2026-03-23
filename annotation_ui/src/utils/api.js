@@ -385,8 +385,9 @@ export const annotations = {
         return response.data;
     },
     // PHASE 5: INTER-ANNOTATOR AGREEMENT (IAA)
-    getChatRoomIAA: async (chatRoomId) => {
-        const response = await api.get(`/admin/chat-rooms/${chatRoomId}/iaa`);
+    getChatRoomIAA: async (chatRoomId, alpha = null) => {
+        const params = alpha !== null ? { alpha } : {};
+        const response = await api.get(`/admin/chat-rooms/${chatRoomId}/iaa`, { params });
         return response.data;
     },
     previewImportAnnotations: async (chatRoomId, file, limit = 20) => {

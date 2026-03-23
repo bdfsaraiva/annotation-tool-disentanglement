@@ -79,40 +79,26 @@ const AdminProjectPage = () => {
     const fetchChatRoomAnalytics = async (rooms, projectData) => {
         const analytics = {};
 
-        if (projectData?.annotation_type === 'adjacency_pairs') {
-            for (const room of rooms) {
-                try {
-                    const statusData = await annotationsApi.getAdjacencyPairsStatus(room.id);
-                    analytics[room.id] = {
-                        status: statusData.status, completedAnnotators: statusData.completed_count,
-                        totalAnnotators: statusData.total_assigned, averageAgreement: null, canAnalyze: false
-                    };
-                } catch {
-                    analytics[room.id] = { status: 'Error', completedAnnotators: 0, totalAnnotators: 0, averageAgreement: null, canAnalyze: false };
-                }
-            }
-            setChatRoomAnalytics(analytics);
-            return;
-        }
-
-        if (projectData?.annotation_type !== 'disentanglement') {
-            rooms.forEach(room => {
-                analytics[room.id] = { status: 'N/A', completedAnnotators: 0, totalAnnotators: 0, averageAgreement: null, canAnalyze: false };
-            });
-            setChatRoomAnalytics(analytics);
-            return;
-        }
-
         for (const room of rooms) {
             try {
                 const iaaData = await annotationsApi.getChatRoomIAA(room.id);
-                analytics[room.id] = {
-                    status: iaaData.analysis_status,
-                    completedAnnotators: iaaData.completed_annotators.length,
-                    totalAnnotators: iaaData.total_annotators_assigned,
-                    averageAgreement: calculateAverageAgreement(iaaData.pairwise_accuracies),
-                    canAnalyze: iaaData.pairwise_accuracies.length > 0
-                };
+                if (projectData?.annotation_type === 'adjacency_pairs') {
+                    analytics[room.id] = {
+                        status: iaaData.analysis_status,
+                        completedAnnotators: iaaData.completed_annotators.length,
+                        totalAnnotators: iaaData.total_annotators_assigned,
+                        averageAgreement: calculateAverageAdjIAA(iaaData.pairwise_adj_iaa),
+                        canAnalyze: iaaData.pairwise_adj_iaa.length > 0,
+                    };
+                } else {
+                    analytics[room.id] = {
+                        status: iaaData.analysis_status,
+                        completedAnnotators: iaaData.completed_annotators.length,
+                        totalAnnotators: iaaData.total_annotators_assigned,
+                        averageAgreement: calculateAverageAgreement(iaaData.pairwise_accuracies),
+                        canAnalyze: iaaData.pairwise_accuracies.length > 0,
+                    };
+                }
             } catch {
                 analytics[room.id] = { status: 'Error', completedAnnotators: 0, totalAnnotators: 0, averageAgreement: null, canAnalyze: false };
             }
@@ -124,6 +110,12 @@ const AdminProjectPage = () => {
         if (!pairwiseAccuracies || pairwiseAccuracies.length === 0) return null;
         const sum = pairwiseAccuracies.reduce((acc, pair) => acc + pair.accuracy, 0);
         return (sum / pairwiseAccuracies.length).toFixed(1);
+    };
+
+    const calculateAverageAdjIAA = (pairwiseAdjIAA) => {
+        if (!pairwiseAdjIAA || pairwiseAdjIAA.length === 0) return null;
+        const sum = pairwiseAdjIAA.reduce((acc, pair) => acc + pair.combined_iaa, 0);
+        return (sum / pairwiseAdjIAA.length).toFixed(3);
     };
 
     useEffect(() => { fetchData(); }, [fetchData]);
@@ -596,21 +588,24 @@ const AdminProjectPage = () => {
                                             </td>
                                             <td>{getStatusBadge(analytics.status)}</td>
                                             <td>{analytics.completedAnnotators || 0} / {analytics.totalAnnotators || 0}</td>
-                                            <td>{analytics.averageAgreement ? `${analytics.averageAgreement}%` : 'N/A'}</td>
+                                            <td>{analytics.averageAgreement
+                                                ? (project.annotation_type === 'adjacency_pairs'
+                                                    ? `${analytics.averageAgreement}`
+                                                    : `${analytics.averageAgreement}%`)
+                                                : 'N/A'}
+                                            </td>
                                             <td className="actions-column">
                                                 <div className="action-button-group">
                                                     <button onClick={() => handleViewChatRoom(room.id)} className="action-button view-button">View Chat</button>
                                                     <button onClick={() => handleOpenRenameChatRoom(room)} className="action-button">Rename</button>
-                                                    {project.annotation_type !== 'adjacency_pairs' && (
-                                                        <button
-                                                            onClick={() => navigate(`/admin/projects/${project.id}/analysis/${room.id}`)}
-                                                            className="action-button analyze-button"
-                                                            disabled={!chatRoomAnalytics[room.id]?.canAnalyze}
-                                                            title={!chatRoomAnalytics[room.id]?.canAnalyze ? 'Not enough data for analysis' : 'Analyze annotations'}
-                                                        >
-                                                            Analyze
-                                                        </button>
-                                                    )}
+                                                    <button
+                                                        onClick={() => navigate(`/admin/projects/${project.id}/analysis/${room.id}`)}
+                                                        className="action-button analyze-button"
+                                                        disabled={!chatRoomAnalytics[room.id]?.canAnalyze}
+                                                        title={!chatRoomAnalytics[room.id]?.canAnalyze ? 'Not enough data for analysis' : 'Analyze annotations'}
+                                                    >
+                                                        Analyze
+                                                    </button>
                                                     <button
                                                         onClick={() => handleExportChatRoom(room.id, room.name, chatRoomAnalytics[room.id])}
                                                         className="action-button export-button"

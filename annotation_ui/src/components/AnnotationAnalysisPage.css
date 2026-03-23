@@ -190,6 +190,102 @@
     color: var(--primary-color);
 }
 
+/* Alpha editor */
+.alpha-editor-section {
+    background-color: var(--background-color-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius);
+    padding: 1.5rem 2rem;
+    margin-bottom: 2rem;
+    box-shadow: var(--card-shadow);
+}
+
+.alpha-editor-section h2 {
+    margin: 0 0 1rem 0;
+    font-size: 1.25rem;
+    color: var(--text-color-primary);
+}
+
+.alpha-editor-form {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.alpha-editor-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 2rem;
+    flex-wrap: wrap;
+}
+
+.alpha-editor-row label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    flex: 1;
+    min-width: 200px;
+}
+
+.alpha-hint {
+    font-size: 0.82rem;
+    color: var(--text-color-secondary, #666);
+    font-weight: normal;
+}
+
+.alpha-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-shrink: 0;
+}
+
+.alpha-input {
+    width: 80px;
+    padding: 0.4rem 0.6rem;
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius);
+    background: var(--background-color-primary);
+    color: var(--text-color-primary);
+    font-size: 0.95rem;
+}
+
+.alpha-error {
+    color: #c62828;
+    font-size: 0.85rem;
+    margin: 0;
+}
+
+/* Matrix Section header with toggle */
+.matrix-section-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.view-cycle-button {
+    flex-shrink: 0;
+    padding: 0.4rem 1rem;
+    background: var(--background-color-tertiary, #eee);
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius);
+    color: var(--text-color-primary);
+    cursor: pointer;
+    font-size: 0.85rem;
+    transition: background 0.15s;
+    white-space: nowrap;
+    align-self: center;
+}
+
+.view-cycle-button:hover {
+    background: var(--primary-color, #0066cc);
+    color: #fff;
+    border-color: var(--primary-color, #0066cc);
+}
+
 /* Matrix Section */
 .matrix-section {
     margin-bottom: 2rem;
@@ -201,8 +297,8 @@
 }
 
 .matrix-section h2 {
-    margin: 0 0 1rem 0;
-    font-size: 1.5rem;
+    margin: 0 0 0.25rem 0;
+    font-size: 1.4rem;
     color: var(--text-color-primary);
     border-bottom: 2px solid var(--primary-color);
     padding-bottom: 0.5rem;

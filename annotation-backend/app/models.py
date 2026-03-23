@@ -28,6 +28,7 @@ class Project(Base):
     description: Mapped[str] = mapped_column(Text, nullable=True)
     annotation_type: Mapped[str] = mapped_column(String, nullable=False, default="disentanglement")
     relation_types: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    iaa_alpha: Mapped[float] = mapped_column(default=0.8, nullable=False, server_default="0.8")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     

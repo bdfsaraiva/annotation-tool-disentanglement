@@ -831,33 +831,17 @@ async def preview_batch_annotations(
 )
 async def get_iaa_for_chat_room(
     chat_room_id: int,
+    alpha: Optional[float] = Query(None, ge=0.0, le=1.0, description="Override project iaa_alpha for this request"),
     db: Session = Depends(get_db),
     _: models.User = Depends(get_current_admin_user)
 ):
     """
-    Calculates and returns the one-to-one agreement analysis for a specific chat room.
-    
-    This endpoint is restricted to admin users and will only return results
-    if the chat room has been fully annotated by all assigned annotators.
-    
-    The analysis includes:
-    - Pairwise accuracy scores between all annotator pairs
-    - Chat room metadata (name, message count, annotator count)
-    - Completeness status
-    
-    Args:
-        chat_room_id: ID of the chat room to analyze
-    
-    Returns:
-        ChatRoomIAA: Complete IAA analysis with pairwise accuracy scores
-    
-    Raises:
-        HTTPException: 
-            - 404 if chat room not found
-            - 400 if chat room is not fully annotated or has insufficient data
+    Calculates and returns the IAA analysis for a specific chat room.
+
+    For adjacency_pairs projects uses LinkF1 × (α + (1-α) × TypeAcc).
+    Pass `alpha` to preview a different weighting without saving it.
     """
-    analysis = crud.get_chat_room_iaa_analysis(db=db, chat_room_id=chat_room_id)
-    return analysis
+    return crud.get_chat_room_iaa_analysis(db=db, chat_room_id=chat_room_id, alpha_override=alpha)
 
 
 # EXPORT FUNCTIONALITY

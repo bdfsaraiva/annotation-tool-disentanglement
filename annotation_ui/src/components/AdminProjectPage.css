@@ -90,6 +90,31 @@
     background: var(--background-color-secondary);
 }
 
+.iaa-alpha-editor {
+    margin-top: 1rem;
+    padding: 0.75rem 1rem;
+    background: var(--background-color-tertiary, #f8f9fa);
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius);
+}
+
+.iaa-alpha-editor label {
+    display: block;
+    margin-bottom: 0.25rem;
+}
+
+.iaa-alpha-editor .setting-hint {
+    font-size: 0.82rem;
+    color: var(--text-color-secondary, #666);
+    margin-bottom: 0.5rem;
+}
+
+.alpha-input-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
 .relation-types-editor {
     display: flex;
     flex-direction: column;
