@@ -1,0 +1,13 @@
+turn_id,user_id,turn_text,reply_to_turn
+T001,user_a,"Hello everyone, let's start the meeting",
+T002,user_b,"Hi! Ready when you are",T001
+T003,user_c,"Good morning! Quick question before we start - did anyone review the report?",
+T004,user_a,"Yes, I reviewed it last night",T003
+T005,user_b,"Same here, had a few notes",T003
+T006,user_a,"Great, we can go through the agenda then",T001
+T007,user_c,"The main finding on page 4 seems off to me",T003
+T008,user_b,"Which section exactly?",T007
+T009,user_a,"Shall we start with item 1?",T006
+T010,user_c,"Section 2.3, the numbers don't add up",T008
+T011,user_b,"Oh I see it now, you're right",T010
+T012,user_a,"Ok let's start - first item is the Q1 review",T009
