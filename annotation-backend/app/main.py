@@ -54,10 +54,6 @@ def create_first_admin():
         db.close()
 
 
-# Create tables
-def init_db():
-    Base.metadata.create_all(bind=engine)
-
 
 app = FastAPI(
     title="LACE — Labelling Adjacency and Conversation Entanglement",
@@ -85,8 +81,7 @@ app.include_router(adjacency_pairs_router)
 
 @app.on_event("startup")
 def startup_event():
-    """Initialize database and create first admin on startup."""
-    init_db()
+    """Create first admin on startup. Schema is managed by Alembic migrations."""
     create_first_admin()
 
 
