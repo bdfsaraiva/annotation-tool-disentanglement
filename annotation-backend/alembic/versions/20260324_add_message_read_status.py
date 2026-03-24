@@ -21,7 +21,7 @@ def upgrade() -> None:
         sa.Column("message_id", sa.Integer(), sa.ForeignKey("chat_messages.id", ondelete="CASCADE"), nullable=False),
         sa.Column("annotator_id", sa.Integer(), sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
         sa.Column("project_id", sa.Integer(), sa.ForeignKey("projects.id", ondelete="CASCADE"), nullable=False),
-        sa.Column("is_read", sa.Boolean(), nullable=False, server_default=sa.text("0")),
+        sa.Column("is_read", sa.Boolean(), nullable=False, server_default=sa.false()),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("CURRENT_TIMESTAMP")),
         sa.UniqueConstraint("message_id", "annotator_id", name="uix_message_read_status"),
     )
