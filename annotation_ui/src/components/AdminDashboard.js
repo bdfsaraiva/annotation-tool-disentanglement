@@ -1,3 +1,28 @@
+/**
+ * @fileoverview Top-level admin dashboard managing projects and users.
+ *
+ * The dashboard has two tab views ("Projects" and "Users") toggled by the
+ * `view` state variable.  Both data sets are loaded in parallel on mount via
+ * `fetchData` (wrapped in `useCallback` to avoid stale-closure issues in the
+ * `useEffect` dependency array).
+ *
+ * Project management:
+ * - Inline create form appears in-page (no modal) when `isCreatingProject` is true.
+ * - Relation-types input is rendered only for `adjacency_pairs` projects; for
+ *   `disentanglement` projects the field is omitted and an empty array is sent.
+ * - Clicking a project row navigates to the admin project detail page.
+ *
+ * User management:
+ * - Create and edit flows use the generic `Modal` component.
+ * - Delete requires confirmation via `ConfirmationModal`; `isDeleting` tracks
+ *   the in-flight deletion to prevent double-submission.
+ * - Password in the edit form is optional: if blank, the field is excluded from
+ *   the PATCH payload so the existing password is preserved.
+ *
+ * Error handling:
+ * - API errors surface via `warningModal`, a simple "OK" modal reused for all
+ *   error conditions, rather than inline error state per operation.
+ */
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { projects as projectsApi, users as usersApi } from '../utils/api';
@@ -6,6 +31,13 @@ import Modal from './Modal';
 import ConfirmationModal from './ConfirmationModal';
 import './AdminDashboard.css';
 
+/**
+ * Admin dashboard page component.
+ *
+ * Manages the full project and user CRUD lifecycle available to administrators.
+ * Uses a tab navigation pattern with shared `warningModal` state for error
+ * feedback across all async operations.
+ */
 const AdminDashboard = () => {
   const navigate = useNavigate();
   const [projects, setProjects] = useState([]);
@@ -28,6 +60,13 @@ const AdminDashboard = () => {
   const [editUser, setEditUser] = useState({ id: null, username: '', password: '', is_admin: false });
   const [warningModal, setWarningModal] = useState({ open: false, message: '' });
 
+  /**
+   * Load all projects and users in parallel and populate state.
+   *
+   * Wrapped in `useCallback` so the function reference is stable across
+   * renders, making it safe to include in the `useEffect` dependency array
+   * and to call directly from mutation handlers to refresh the table.
+   */
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
@@ -53,10 +92,22 @@ const AdminDashboard = () => {
     fetchData();
   }, [fetchData]);
 
+  /**
+   * Navigate to the admin project detail page for the given project.
+   * @param {number} projectId
+   */
   const handleProjectClick = (projectId) => {
     navigate(`/admin/projects/${projectId}`);
   };
 
+  /**
+   * Submit the new-project form.
+   *
+   * Strips empty entries from the comma-separated relation-types string and
+   * omits the field entirely for non-adjacency-pairs projects.
+   *
+   * @param {React.FormEvent<HTMLFormElement>} e
+   */
   const handleCreateProject = async (e) => {
     e.preventDefault();
     if (!newProject.annotation_type) {
@@ -89,6 +140,10 @@ const AdminDashboard = () => {
     }
   };
 
+  /**
+   * Submit the create-user form and refresh the user list on success.
+   * @param {React.FormEvent<HTMLFormElement>} e
+   */
   const handleCreateUser = async (e) => {
     e.preventDefault();
     try {
@@ -105,15 +160,30 @@ const AdminDashboard = () => {
     }
   };
 
+  /**
+   * Open the delete-confirmation modal for the selected user.
+   * @param {Object} user - User record to be deleted.
+   */
   const handleDeleteUser = async (user) => {
     setDeleteConfirmation({ show: true, user });
   };
 
+  /**
+   * Populate the edit-user form with the selected user's current data and
+   * open the edit modal.  Password is intentionally left blank so it is only
+   * updated if the admin explicitly enters a new value.
+   * @param {Object} user - User record to edit.
+   */
   const handleEditUser = (user) => {
     setEditUser({ id: user.id, username: user.username, password: '', is_admin: user.is_admin });
     setShowEditUserModal(true);
   };
 
+  /**
+   * Submit the edit-user form.  The password field is only included in the
+   * PATCH payload when the admin enters a non-empty value.
+   * @param {React.FormEvent<HTMLFormElement>} e
+   */
   const handleUpdateUser = async (e) => {
     e.preventDefault();
     try {
@@ -137,6 +207,10 @@ const AdminDashboard = () => {
     }
   };
 
+  /**
+   * Execute the confirmed user deletion.  Sets `isDeleting` while the request
+   * is in flight so the confirmation modal can disable its buttons.
+   */
   const confirmDeleteUser = async () => {
     if (!deleteConfirmation.user) return;
     

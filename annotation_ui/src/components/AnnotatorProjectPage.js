@@ -1,9 +1,30 @@
-﻿import React, { useState, useEffect } from 'react';
+﻿/**
+ * @fileoverview Annotator-facing project detail page.
+ *
+ * Displays the project name, description, and a table of available chat rooms.
+ * For `adjacency_pairs` projects, each row includes an "Import annotation"
+ * button that opens a two-step modal flow:
+ *
+ * 1. File picker modal — annotator selects a `.txt` export file.
+ * 2. If existing pairs are found, a conflict-resolution modal lets the
+ *    annotator choose between `'merge'` (add to existing) and `'replace'`
+ *    (delete existing first).
+ *
+ * A result modal summarises the import outcome (imported count, skipped
+ * lines, per-line errors).
+ *
+ * For `disentanglement` projects, a "View My Annotations" link appears in
+ * the header instead.
+ */
+import React, { useState, useEffect } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { projects, adjacencyPairs } from '../utils/api';
 import Modal from './Modal';
 import './AnnotatorProjectPage.css';
 
+/**
+ * Project overview page for annotators showing chat rooms and import tools.
+ */
 const AnnotatorProjectPage = () => {
     const { projectId } = useParams();
     const navigate = useNavigate();
@@ -39,12 +60,21 @@ const AnnotatorProjectPage = () => {
         fetchData();
     }, [projectId]);
 
+    /**
+     * Open the import modal pre-seeded with the selected room.
+     * @param {Object} room - Chat room record.
+     */
     const handleStartImport = (room) => {
         setImportRoom(room);
         setImportFile(null);
         setShowImportModal(true);
     };
 
+    /**
+     * Execute the actual import with the given conflict-resolution mode.
+     * @param {'merge'|'replace'} mode - `'merge'` preserves existing pairs;
+     *   `'replace'` deletes them before inserting the imported ones.
+     */
     const doImport = async (mode) => {
         if (!importRoom || !importFile) return;
         setIsImporting(true);
@@ -62,6 +92,10 @@ const AnnotatorProjectPage = () => {
         }
     };
 
+    /**
+     * Validate the selection and either prompt for conflict resolution or
+     * proceed with `'merge'` mode directly when no existing pairs are found.
+     */
     const handleImportClick = async () => {
         if (!importRoom || !importFile) return;
         if (project.annotation_type !== 'adjacency_pairs') return;

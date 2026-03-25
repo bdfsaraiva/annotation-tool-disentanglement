@@ -1,3 +1,16 @@
+/**
+ * @fileoverview Generic chat-room view (legacy/shared base).
+ *
+ * Fetches chat room metadata, all messages, and all annotations for each
+ * message (one parallel promise per message), then builds a `threadTags` map
+ * aggregating per-thread statistics (message count, annotator count).  Renders
+ * message bubbles in a scrollable list alongside a `ThreadMenu` sidebar for
+ * each discovered thread.
+ *
+ * Note: The main annotation workflows use the more specialised
+ * `AnnotatorChatRoomPage` and `AdminChatRoomView` components.  This component
+ * may serve as a simple read-only view or a development reference.
+ */
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { projects, annotations } from '../utils/api';
@@ -5,6 +18,10 @@ import MessageBubble from './MessageBubble';
 import ThreadMenu from './ThreadMenu';
 import './ChatRoomPage.css';
 
+/**
+ * Chat room page that loads messages and annotations then renders an annotated
+ * conversation view with a thread summary sidebar.
+ */
 const ChatRoomPage = () => {
   const { projectId, chatRoomId } = useParams();
   const navigate = useNavigate();
@@ -21,6 +38,14 @@ const ChatRoomPage = () => {
     fetchChatRoomData();
   }, [projectId, chatRoomId]);
 
+  /**
+   * Load chat room metadata, messages, and per-message annotations in sequence,
+   * then aggregate thread statistics into `threadTags`.
+   *
+   * Annotation loading issues N parallel requests (one per message).  The
+   * `annotator_count` field is derived by counting unique entries in a
+   * transient `Set` that is deleted before the thread is stored in state.
+   */
   const fetchChatRoomData = async () => {
     try {
       setLoading(true);
@@ -82,6 +107,11 @@ const ChatRoomPage = () => {
     }
   };
 
+  /**
+   * Toggle user-turn highlighting.  Clicking the same user a second time
+   * deselects them.
+   * @param {string} userId
+   */
   const handleUserClick = (userId) => {
     setSelectedUserId(prevUserId => prevUserId === userId ? null : userId);
   };
@@ -90,6 +120,16 @@ const ChatRoomPage = () => {
     navigate(`/admin/projects/${projectId}`);
   };
 
+  /**
+   * Create a new annotation and optimistically update local state.
+   *
+   * Sets an in-progress flag for the specific message to disable its controls
+   * while the request is in flight.  On success, appends the new annotation to
+   * `messageAnnotations` and increments the relevant thread's message count.
+   *
+   * @param {number} messageId
+   * @param {string} tag - Thread label to assign.
+   */
   const handleAnnotationCreate = async (messageId, tag) => {
     try {
       setAnnotationInProgress(prev => ({ ...prev, [messageId]: true }));
@@ -128,6 +168,16 @@ const ChatRoomPage = () => {
     }
   };
 
+  /**
+   * Delete an annotation and synchronise local state.
+   *
+   * Removes the annotation from `messageAnnotations` and decrements the
+   * thread's message count, deleting the thread entry entirely when the count
+   * reaches zero.
+   *
+   * @param {number} messageId
+   * @param {number} annotationId
+   */
   const handleAnnotationDelete = async (messageId, annotationId) => {
     try {
       await annotations.deleteAnnotation(projectId, messageId, annotationId);

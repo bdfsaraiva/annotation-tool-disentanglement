@@ -1,7 +1,29 @@
+/**
+ * @fileoverview Route guard that enforces authentication and optional admin-only access.
+ *
+ * Wraps a React Router v6 route element.  While `AuthContext` is still
+ * resolving the session (i.e., `isLoading` is `true`), a plain text fallback
+ * is shown to avoid a premature redirect.  Once loading completes:
+ *
+ * - Unauthenticated users are sent to `/login`; the originating URL is
+ *   preserved in `location.state.from` so it can be restored after login.
+ * - Authenticated non-admin users visiting an `adminOnly` route are bounced
+ *   to `/dashboard`.
+ * - All other users see the protected child component.
+ */
 import React from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 
+/**
+ * Guards a route element with authentication and optional role checks.
+ *
+ * @param {Object} props
+ * @param {React.ReactNode} props.children - The route element to render when
+ *   access is permitted.
+ * @param {boolean} [props.adminOnly=false] - When `true`, non-admin users are
+ *   redirected to `/dashboard` even if they are authenticated.
+ */
 const ProtectedRoute = ({ children, adminOnly = false }) => {
     const { isAuthenticated, currentUser, isLoading } = useAuth();
     const location = useLocation();

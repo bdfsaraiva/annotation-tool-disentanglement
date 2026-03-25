@@ -1,3 +1,21 @@
+"""
+Admin-only API endpoints for the LACE annotation platform.
+
+All routes in this module require the requesting user to be an admin
+(enforced via the ``get_current_admin_user`` dependency on every handler).
+Routes are mounted under the ``/admin`` prefix.
+
+Endpoint groups:
+- **User management** — list, create, update, delete users.
+- **Project management** — list, create, update, delete projects; assign annotators.
+- **Chat-room management** — update, delete rooms; completion and read-status summaries.
+- **CSV import** — single-step chat-room creation + message import with preview support.
+- **Annotation import** — single-annotator CSV import and multi-annotator batch JSON import
+  (both with preview endpoints).
+- **Aggregated annotations** — cross-annotator view used as the foundation for IAA.
+- **IAA analysis** — per-room Inter-Annotator Agreement with optional alpha override.
+- **Export** — JSON export of all annotated data; plain-text / ZIP export of adjacency pairs.
+"""
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, Query
 from sqlalchemy.orm import Session, aliased
 from typing import List, Optional
@@ -30,26 +48,45 @@ settings = get_settings()
 async def list_users(
     db: Session = Depends(get_db),
     _: models.User = Depends(get_current_admin_user)
-):
-    """List all users (admin only)"""
+) -> List[models.User]:
+    """
+    Return a list of all registered users.
+
+    Returns:
+        A list of ``User`` objects for every account in the database.
+    """
     return crud.get_users(db)
+
 
 @router.post("/users", response_model=schemas.User)
 async def create_user(
     user_data: schemas.UserCreate,
     db: Session = Depends(get_db),
     _: models.User = Depends(get_current_admin_user)
-):
-    """Create a new user (admin only)"""
-    # Check if user exists
+) -> models.User:
+    """
+    Create a new user account.
+
+    The password is validated against the configured policy before being hashed.
+
+    Args:
+        user_data: ``UserCreate`` payload with ``username``, ``password``, and
+            optional ``is_admin`` flag.
+
+    Returns:
+        The newly created ``User`` object.
+
+    Raises:
+        HTTPException: 400 if the username is already taken or the password
+            fails the strength policy.
+    """
     existing_user = crud.get_user_by_username(db, user_data.username)
     if existing_user:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Username already registered"
         )
-    
-    # Create user with hashed password
+
     try:
         validate_password_strength(user_data.password)
     except ValueError as e:
@@ -58,14 +95,33 @@ async def create_user(
     new_user = crud.create_user(db, user_data, hashed_password)
     return new_user
 
+
 @router.put("/users/{user_id}", response_model=schemas.User)
 async def update_user(
     user_id: int,
     updates: schemas.UserUpdate,
     db: Session = Depends(get_db),
     _: models.User = Depends(get_current_admin_user)
-):
-    """Update a user (admin only)"""
+) -> models.User:
+    """
+    Update an existing user's username, password, or admin flag.
+
+    All ``UserUpdate`` fields are optional — only provided fields are changed.
+    When a new password is supplied it is re-validated against the policy and
+    re-hashed.
+
+    Args:
+        user_id: Primary key of the user to update.
+        updates: Partial ``UserUpdate`` payload.
+
+    Returns:
+        The updated ``User`` object.
+
+    Raises:
+        HTTPException: 404 if the user does not exist.
+        HTTPException: 400 if the desired username is already in use by a
+            different user, or if the new password fails the strength policy.
+    """
     user = crud.get_user(db, user_id)
     if not user:
         raise HTTPException(
@@ -75,6 +131,7 @@ async def update_user(
 
     if updates.username:
         existing_user = crud.get_user_by_username(db, updates.username)
+        # Allow updating to the same username (no-op rename).
         if existing_user and existing_user.id != user_id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -96,17 +153,39 @@ async def update_user(
 async def list_all_projects(
     db: Session = Depends(get_db),
     _: models.User = Depends(get_current_admin_user)
-):
-    """List all projects (admin only)"""
+) -> List[models.Project]:
+    """
+    Return a list of all projects.
+
+    Returns:
+        All ``Project`` rows in the database, regardless of who created them.
+    """
     return crud.get_projects(db)
+
 
 @router.post("/projects", response_model=schemas.Project)
 async def create_project(
     project_data: schemas.ProjectCreate,
     db: Session = Depends(get_db),
     _: models.User = Depends(get_current_admin_user)
-):
-    """Create a new project (admin only)"""
+) -> models.Project:
+    """
+    Create a new annotation project.
+
+    For adjacency-pairs projects at least one relation type must be supplied so
+    that annotators have labels to choose from.
+
+    Args:
+        project_data: ``ProjectCreate`` payload including name, annotation type,
+            relation types (required for adjacency_pairs), and IAA alpha.
+
+    Returns:
+        The newly created ``Project`` object.
+
+    Raises:
+        HTTPException: 400 if the project type is ``adjacency_pairs`` and no
+            relation types are provided.
+    """
     if project_data.annotation_type == "adjacency_pairs" and not project_data.relation_types:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -114,13 +193,25 @@ async def create_project(
         )
     return crud.create_project(db, project_data)
 
+
 @router.get("/projects/{project_id}", response_model=schemas.Project)
 async def get_project(
     project_id: int,
     db: Session = Depends(get_db),
     _: models.User = Depends(get_current_admin_user)
-):
-    """Get a specific project (admin only)"""
+) -> models.Project:
+    """
+    Retrieve a single project by its primary key.
+
+    Args:
+        project_id: Primary key of the project.
+
+    Returns:
+        The ``Project`` object.
+
+    Raises:
+        HTTPException: 404 if the project does not exist.
+    """
     project = crud.get_project(db, project_id)
     if not project:
         raise HTTPException(
@@ -129,14 +220,33 @@ async def get_project(
         )
     return project
 
+
 @router.put("/projects/{project_id}", response_model=schemas.Project)
 async def update_project(
     project_id: int,
     updates: schemas.ProjectUpdate,
     db: Session = Depends(get_db),
     _: models.User = Depends(get_current_admin_user)
-):
-    """Update project metadata (admin only)"""
+) -> models.Project:
+    """
+    Update project metadata.
+
+    All ``ProjectUpdate`` fields are optional; only provided fields are applied.
+    Clearing ``relation_types`` on an adjacency-pairs project is rejected because
+    annotators would have no labels to select.
+
+    Args:
+        project_id: Primary key of the project to update.
+        updates: Partial ``ProjectUpdate`` payload.
+
+    Returns:
+        The updated ``Project`` object.
+
+    Raises:
+        HTTPException: 404 if the project does not exist.
+        HTTPException: 400 if the final annotation type is ``adjacency_pairs``
+            and ``relation_types`` would become empty.
+    """
     project = crud.get_project(db, project_id)
     if not project:
         raise HTTPException(
@@ -144,6 +254,7 @@ async def update_project(
             detail="Project not found"
         )
     if updates.relation_types is not None:
+        # Use the updated annotation_type if provided, otherwise use the current one.
         target_annotation_type = updates.annotation_type or project.annotation_type
         if target_annotation_type == "adjacency_pairs" and not updates.relation_types:
             raise HTTPException(
@@ -152,42 +263,65 @@ async def update_project(
             )
     return crud.update_project(db, project, updates)
 
+
 @router.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_user(
     user_id: int,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_admin_user)
-):
-    """Delete a user (admin only)"""
+) -> None:
+    """
+    Permanently delete a user account and all associated data.
+
+    An admin cannot delete their own account to prevent accidental lock-out.
+
+    Args:
+        user_id: Primary key of the user to delete.
+        current_user: The authenticated admin making the request.
+
+    Raises:
+        HTTPException: 400 if the admin attempts to delete their own account.
+        HTTPException: 404 if the user does not exist.
+    """
     if user_id == current_user.id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Cannot delete your own account"
         )
-    
+
     user = crud.get_user(db, user_id)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found"
         )
-    
+
     crud.delete_user(db, user)
+
 
 @router.delete("/projects/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_project(
     project_id: int,
     db: Session = Depends(get_db),
     _: models.User = Depends(get_current_admin_user)
-):
-    """Delete a project (admin only)"""
+) -> None:
+    """
+    Permanently delete a project and all of its associated chat rooms,
+    messages, and annotations (cascade delete).
+
+    Args:
+        project_id: Primary key of the project to delete.
+
+    Raises:
+        HTTPException: 404 if the project does not exist.
+    """
     project = crud.get_project(db, project_id)
     if not project:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Project not found"
         )
-    
+
     crud.delete_project(db, project)
 
 @router.post("/projects/{project_id}/import-chat-room-csv/preview", response_model=schemas.CSVPreviewResponse)
@@ -197,8 +331,28 @@ async def preview_chat_room_csv(
     limit: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
     _: models.User = Depends(get_current_admin_user)
-):
-    """Preview a CSV file before importing a chat room (admin only)."""
+) -> schemas.CSVPreviewResponse:
+    """
+    Preview the first ``limit`` rows of a chat-room CSV without importing.
+
+    Validates the file format and size before returning a preview so the admin
+    can verify the data looks correct before committing.  The temporary file is
+    always deleted in the ``finally`` block regardless of success or failure.
+
+    Args:
+        project_id: Primary key of the target project (must exist).
+        file: Uploaded ``.csv`` file.
+        limit: Maximum number of rows to include in the preview (1–100).
+
+    Returns:
+        ``CSVPreviewResponse`` with ``total_rows``, ``preview_rows``, and any
+        format warnings.
+
+    Raises:
+        HTTPException: 404 if the project does not exist.
+        HTTPException: 400 if the file is not a CSV, exceeds the upload size
+            limit, exceeds the row limit, or has an invalid format.
+    """
     project = crud.get_project(db, project_id)
     if not project:
         raise HTTPException(
@@ -246,8 +400,34 @@ async def create_chat_room_and_import_csv(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     _: models.User = Depends(get_current_admin_user)
-):
-    """Create a new chat room from a CSV filename and import its content (admin only)"""
+) -> schemas.ChatRoomImportResponse:
+    """
+    Create a new chat room and import its messages from a CSV file in one step.
+
+    The chat room name is derived from the CSV filename (without extension).
+    Each row must contain ``turn_id``, ``user_id``, and ``turn_text`` columns;
+    the optional ``reply_to_turn`` column links a turn to its direct predecessor.
+
+    If a ``reply_to_turn`` value references a ``turn_id`` that does not exist
+    in the file, the reference is cleared and a warning is recorded rather than
+    failing the import.
+
+    If the overall import fails after the chat room has already been created,
+    the room is deleted to avoid leaving an empty room in the database.
+
+    Args:
+        project_id: Primary key of the project to import into.
+        file: Uploaded ``.csv`` file containing the conversation turns.
+
+    Returns:
+        ``ChatRoomImportResponse`` containing the new room's details and import
+        statistics (imported count, skipped count, errors, and warnings).
+
+    Raises:
+        HTTPException: 404 if the project does not exist.
+        HTTPException: 400 if the file is not a CSV, exceeds limits, or cannot
+            be parsed.
+    """
     # Check project exists
     project = crud.get_project(db, project_id)
     if not project:
@@ -365,8 +545,24 @@ async def update_chat_room(
     updates: schemas.ChatRoomUpdate,
     db: Session = Depends(get_db),
     _: models.User = Depends(get_current_admin_user)
-):
-    """Update a chat room (admin only)."""
+) -> models.ChatRoom:
+    """
+    Rename or re-describe a chat room.
+
+    Chat room names must be unique within their parent project.
+
+    Args:
+        chat_room_id: Primary key of the room to update.
+        updates: ``ChatRoomUpdate`` payload (name and/or description).
+
+    Returns:
+        The updated ``ChatRoom`` object.
+
+    Raises:
+        HTTPException: 404 if the room does not exist.
+        HTTPException: 400 if the new name is already used by another room in
+            the same project.
+    """
     chat_room = crud.get_chat_room(db, chat_room_id)
     if not chat_room:
         raise HTTPException(
@@ -391,8 +587,16 @@ async def delete_chat_room(
     chat_room_id: int,
     db: Session = Depends(get_db),
     _: models.User = Depends(get_current_admin_user)
-):
-    """Delete a chat room (admin only)."""
+) -> None:
+    """
+    Permanently delete a chat room and all its messages and annotations.
+
+    Args:
+        chat_room_id: Primary key of the room to delete.
+
+    Raises:
+        HTTPException: 404 if the room does not exist.
+    """
     chat_room = crud.get_chat_room(db, chat_room_id)
     if not chat_room:
         raise HTTPException(
@@ -409,9 +613,23 @@ async def get_chat_room_completion_summary(
     chat_room_id: int,
     db: Session = Depends(get_db),
     _: models.User = Depends(get_current_admin_user)
-):
-    """Get manual completion summary for a chat room (admin only)."""
+) -> schemas.ChatRoomCompletionSummary:
+    """
+    Return a summary of manual completion flags for a chat room.
+
+    Completion is explicitly set by annotators rather than inferred from
+    annotation coverage, so this summary shows which assigned annotators have
+    self-reported that they are done.
+
+    Args:
+        chat_room_id: Primary key of the chat room.
+
+    Returns:
+        ``ChatRoomCompletionSummary`` with total assigned, completed count, and
+        a list of annotators who have marked the room done.
+    """
     return crud.get_chat_room_completion_summary(db, chat_room_id)
+
 
 @router.get(
     "/chat-rooms/{chat_room_id}/adjacency-status",
@@ -421,8 +639,20 @@ async def get_adjacency_pairs_status(
     chat_room_id: int,
     db: Session = Depends(get_db),
     _: models.User = Depends(get_current_admin_user)
-):
-    """Get adjacency pairs status for a chat room (admin only)."""
+) -> schemas.AdjacencyPairsStatus:
+    """
+    Return the high-level annotation status for an adjacency-pairs chat room.
+
+    The ``status`` field is one of ``"NotStarted"``, ``"Started"``, or
+    ``"Completed"`` and is derived from the completion flags and pair count.
+
+    Args:
+        chat_room_id: Primary key of the chat room.
+
+    Returns:
+        ``AdjacencyPairsStatus`` with the status string, completion counts,
+        and a flag indicating whether any pairs have been created.
+    """
     return crud.get_adjacency_pairs_status(db, chat_room_id)
 
 
@@ -434,8 +664,20 @@ async def get_read_status_summary(
     chat_room_id: int,
     db: Session = Depends(get_db),
     _: models.User = Depends(get_current_admin_user)
-):
-    """Get per-turn read status for all annotators in a chat room (admin only)."""
+) -> schemas.RoomReadStatusSummary:
+    """
+    Return per-turn read/unread flags for every annotator in a chat room.
+
+    Useful for supervisors who want to verify that annotators have read all
+    turns before submitting annotations.
+
+    Args:
+        chat_room_id: Primary key of the chat room.
+
+    Returns:
+        ``RoomReadStatusSummary`` with one ``ReadStatusEntry`` per
+        (message, annotator) pair that has been explicitly marked.
+    """
     return crud.get_read_status_summary_for_room(db, chat_room_id)
 
 # --- Remove or comment out old endpoints --- 
@@ -457,15 +699,27 @@ async def import_annotations_for_chat_room(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     _: models.User = Depends(get_current_admin_user)
-):
+) -> schemas.AnnotationImportResponse:
     """
-    Import annotations from CSV and assign them to a specific user (admin only).
-    PHASE 2: This implements the attributed import functionality from the action plan.
-    
+    Import disentanglement annotations from a CSV file and attribute them to a user.
+
+    The CSV must contain ``turn_id`` and ``thread_id`` columns.  Rows whose
+    ``turn_id`` does not match a message in the specified chat room are skipped
+    and counted in ``skipped_count``.
+
     Args:
-        chat_room_id: ID of the chat room to import annotations for
-        user_id: ID of the user to whom these annotations belong
-        file: CSV file containing turn_id and thread_id columns
+        chat_room_id: Primary key of the target chat room.
+        user_id: ID of the annotator to whom the imported annotations are
+            attributed (must already exist in the database).
+        file: Uploaded ``.csv`` file with annotation data.
+
+    Returns:
+        ``AnnotationImportResponse`` with counts and any per-row error messages.
+
+    Raises:
+        HTTPException: 404 if the chat room or user does not exist.
+        HTTPException: 400 if the file is not a CSV, exceeds limits, or cannot
+            be parsed.
     """
     # Validate chat room exists
     chat_room = crud.get_chat_room(db, chat_room_id)
@@ -546,8 +800,23 @@ async def preview_annotations_for_chat_room(
     limit: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
     _: models.User = Depends(get_current_admin_user)
-):
-    """Preview an annotations CSV before importing (admin only)."""
+) -> schemas.AnnotationPreviewResponse:
+    """
+    Preview the first ``limit`` rows of an annotations CSV without importing.
+
+    Args:
+        chat_room_id: Primary key of the target chat room (must exist).
+        file: Uploaded ``.csv`` file with ``turn_id`` and ``thread_id`` columns.
+        limit: Maximum number of rows to include in the preview (1–100).
+
+    Returns:
+        ``AnnotationPreviewResponse`` with ``total_rows`` and a list of preview
+        rows showing ``(turn_id, thread_id)`` pairs.
+
+    Raises:
+        HTTPException: 404 if the chat room does not exist.
+        HTTPException: 400 if the file is invalid or exceeds upload limits.
+    """
     chat_room = crud.get_chat_room(db, chat_room_id)
     if not chat_room:
         raise HTTPException(
@@ -595,11 +864,25 @@ async def get_aggregated_annotations(
     chat_room_id: int,
     db: Session = Depends(get_db),
     _: models.User = Depends(get_current_admin_user)
-):
+) -> schemas.AggregatedAnnotationsResponse:
     """
-    Get aggregated annotations for a chat room (admin only).
-    PHASE 3: This provides the foundation for IAA analysis by showing all annotations
-    organized by message, making concordance and discordance immediately visible.
+    Return all annotations for a chat room, grouped by message and annotator.
+
+    This aggregated view is the foundation for IAA analysis: it makes
+    concordance and discordance between annotators immediately visible at the
+    message level, and is used by the front-end admin comparison panel.
+
+    Args:
+        chat_room_id: Primary key of the chat room to inspect.
+
+    Returns:
+        ``AggregatedAnnotationsResponse`` containing every message and, for
+        each, the list of ``AnnotationDetail`` entries from all annotators,
+        plus summary statistics (total messages, annotated messages, annotator
+        list).
+
+    Raises:
+        HTTPException: 404 if the chat room does not exist.
     """
     # Validate chat room exists
     chat_room = crud.get_chat_room(db, chat_room_id)
@@ -641,24 +924,37 @@ async def import_batch_annotations(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     _: models.User = Depends(get_current_admin_user)
-):
+) -> schemas.BatchAnnotationImportResponse:
     """
-    Import batch annotations from JSON file (admin only).
-    PHASE 4: This implements the batch import functionality for multiple annotators.
-    
-    This endpoint accepts a JSON file containing structured batch annotation data
-    with multiple annotators and their annotations. It will:
-    1. Validate the JSON structure against the expected schema
-    2. Create users if they don't exist (based on username)
-    3. Import all annotations for each annotator
-    4. Return detailed statistics about the import operation
-    
+    Import annotations for multiple annotators from a single structured JSON file.
+
+    The JSON file must conform to the ``BatchAnnotationImport`` schema:
+    a ``batch_metadata`` block (including ``chat_room_id`` and ``project_id``
+    that must match the request) followed by an ``annotators`` list where each
+    entry carries a username, display name, and a list of ``(turn_id, thread_id)``
+    annotation pairs.
+
+    Non-existent annotators are created automatically with a placeholder
+    password.  Existing annotations for the same (message, annotator) pair are
+    skipped rather than overwritten.
+
+    The ``chat_room_id`` and ``project_id`` in the JSON are validated against
+    the URL path and the chat room's parent project respectively to catch
+    copy-paste errors before any data is written.
+
     Args:
-        chat_room_id: ID of the chat room to import annotations for
-        file: JSON file containing batch annotation data
-    
+        chat_room_id: Primary key of the target chat room.
+        file: Uploaded ``.json`` batch annotation file.
+
     Returns:
-        BatchAnnotationImportResponse with detailed import statistics
+        ``BatchAnnotationImportResponse`` with per-annotator counts and any
+        global errors.
+
+    Raises:
+        HTTPException: 404 if the chat room does not exist.
+        HTTPException: 400 if the file is not JSON, is malformed, fails schema
+            validation, exceeds upload limits, or has mismatched metadata IDs.
+        HTTPException: 500 for unexpected database errors.
     """
     # Validate file type
     if not file.filename or not file.filename.lower().endswith('.json'):
@@ -752,8 +1048,28 @@ async def preview_batch_annotations(
     limit: int = Query(10, ge=1, le=50),
     db: Session = Depends(get_db),
     _: models.User = Depends(get_current_admin_user)
-):
-    """Preview a batch annotations JSON file before importing (admin only)."""
+) -> schemas.BatchAnnotationPreviewResponse:
+    """
+    Preview a batch annotation JSON file before committing the import.
+
+    Validates the file format, schema, and metadata ID consistency, then
+    returns summary information about the annotators it contains without
+    writing anything to the database.
+
+    Args:
+        chat_room_id: Primary key of the target chat room.
+        file: Uploaded ``.json`` batch annotation file.
+        limit: Maximum number of annotators to include in the preview (1–50).
+
+    Returns:
+        ``BatchAnnotationPreviewResponse`` with annotator summaries and total
+        annotation counts.
+
+    Raises:
+        HTTPException: 404 if the chat room does not exist.
+        HTTPException: 400 if the file is not JSON, is malformed, or has
+            mismatched metadata IDs.
+    """
     if not file.filename or not file.filename.lower().endswith('.json'):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -844,15 +1160,36 @@ async def preview_batch_annotations(
 )
 async def get_iaa_for_chat_room(
     chat_room_id: int,
-    alpha: Optional[float] = Query(None, ge=0.0, le=1.0, description="Override project iaa_alpha for this request"),
+    alpha: Optional[float] = Query(
+        None, ge=0.0, le=1.0,
+        description="Override the project's iaa_alpha for this request without saving it."
+    ),
     db: Session = Depends(get_db),
     _: models.User = Depends(get_current_admin_user)
-):
+) -> schemas.ChatRoomIAA:
     """
-    Calculates and returns the IAA analysis for a specific chat room.
+    Calculate and return the Inter-Annotator Agreement (IAA) for a chat room.
 
-    For adjacency_pairs projects uses LinkF1 × (α + (1-α) × TypeAcc).
-    Pass `alpha` to preview a different weighting without saving it.
+    **Disentanglement projects** — pairwise one-to-one accuracy using the
+    Hungarian algorithm for optimal thread-label matching.
+
+    **Adjacency-pairs projects** — per-pair ``LinkF1 × (α + (1-α) × TypeAcc)``
+    where α is ``project.iaa_alpha``.  Pass the ``alpha`` query parameter to
+    preview the effect of a different weighting without persisting the change.
+
+    The response includes an ``analysis_status`` field:
+    - ``"Complete"`` — all assigned annotators have marked the room done.
+    - ``"Partial"`` — some annotators are done; scores are shown but should be
+      interpreted cautiously.
+    - ``"NotEnoughData"`` — fewer than two annotators have completed the room;
+      pairwise scores cannot be calculated.
+
+    Args:
+        chat_room_id: Primary key of the chat room.
+        alpha: Optional per-request override of the project IAA alpha (0–1).
+
+    Returns:
+        ``ChatRoomIAA`` with pairwise scores, annotator lists, and metadata.
     """
     return crud.get_chat_room_iaa_analysis(db=db, chat_room_id=chat_room_id, alpha_override=alpha)
 
@@ -864,23 +1201,28 @@ async def export_chat_room_data(
     chat_room_id: int,
     db: Session = Depends(get_db),
     _: models.User = Depends(get_current_admin_user)
-):
+) -> JSONResponse:
     """
     Export all annotated data from a chat room as a downloadable JSON file.
-    
-    This endpoint generates a structured JSON file containing:
-    - Chat room metadata (ID, name, project ID)
-    - All messages with their complete text and metadata
-    - All annotations from all annotators for each message
-    
+
+    The generated JSON contains:
+    - Chat room metadata (ID, name, project ID).
+    - All messages with their text, ``turn_id``, ``user_id``, and ``reply_to_turn``.
+    - All annotations from all annotators for each message.
+    - Export metadata including the completion status and timestamp.
+
+    The filename is generated dynamically based on the chat room name and
+    completion status (``COMPLETE``, ``PARTIAL``, or ``INSUFFICIENT``).
+
     Args:
-        chat_room_id: ID of the chat room to export
-    
+        chat_room_id: Primary key of the chat room to export.
+
     Returns:
-        JSON file download with the complete annotated data
-    
+        A ``JSONResponse`` with a ``Content-Disposition: attachment`` header so
+        browsers download the file rather than displaying it.
+
     Raises:
-        HTTPException: 404 if chat room not found
+        HTTPException: 404 if the chat room does not exist.
     """
     # Get the export data
     export_data = crud.export_chat_room_data(db=db, chat_room_id=chat_room_id)
@@ -914,10 +1256,36 @@ async def export_adjacency_pairs(
     annotator_id: Optional[int] = None,
     db: Session = Depends(get_db),
     _: models.User = Depends(get_current_admin_user)
-):
+) -> Response:
     """
-    Export adjacency pairs as a plain text file with one link per line.
-    Format: turnA,turnB,relation_type
+    Export adjacency pairs as a plain-text file or a ZIP archive.
+
+    Each line in the text output has the format::
+
+        turnA_id,turnB_id,relation_type
+
+    **Single annotator** (``annotator_id`` supplied) — returns a single
+    ``text/plain`` file named ``{room_name}-{username}.txt``.
+
+    **All annotators** (``annotator_id`` omitted) — returns a
+    ``application/zip`` archive with one ``.txt`` file per annotator assigned
+    to the project.  Annotators who have not created any pairs are included as
+    empty files so the archive is always complete.
+
+    Args:
+        chat_room_id: Primary key of the chat room to export.
+        annotator_id: Optional ID of a specific annotator to export; omit to
+            export all assigned annotators as a ZIP.
+
+    Returns:
+        A plain-text ``Response`` for a single annotator, or a ZIP ``Response``
+        for the all-annotators case.
+
+    Raises:
+        HTTPException: 404 if the chat room, the specified annotator, or the
+            project's assigned annotators cannot be found.
+        HTTPException: 400 if the chat room does not belong to an adjacency-pairs
+            project.
     """
     chat_room = crud.get_chat_room(db, chat_room_id)
     if not chat_room:

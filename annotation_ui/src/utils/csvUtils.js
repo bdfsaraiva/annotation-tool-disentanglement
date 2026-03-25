@@ -1,9 +1,39 @@
+/**
+ * @fileoverview Client-side CSV utility helpers using PapaParse.
+ *
+ * This module is largely a legacy utility from an earlier development phase
+ * when chat data was loaded directly from local CSV files.  The primary
+ * application workflow now uses the FastAPI backend for CSV parsing.
+ *
+ * The `loadCsv` function is still used for client-side CSV validation.
+ * `saveChangesToCsv`, `copyToFiles`, and `loadWorkspaceFile` depend on a
+ * `/api/*` proxy that is not present in the current backend and are therefore
+ * effectively no-ops in the production deployment.
+ */
 import Papa from 'papaparse';
-//import path from 'path';
-//import fs from 'fs';
 
-
+/**
+ * @namespace csvUtils
+ * @description Collection of CSV read/write helpers.
+ */
 const csvUtils = {
+    /**
+     * Parse a browser `File` object as a CSV using PapaParse.
+     *
+     * Validates that the parsed header contains the required columns
+     * (`user_id`, `turn_id`, `turn_text`), case-insensitively.  Adds a
+     * default empty `thread` field to every row so downstream disentanglement
+     * logic can assume the field exists.
+     *
+     * @param {File} file - A `File` object (from an `<input type="file">`).
+     * @returns {Promise<{
+     *   data: Object[],
+     *   metadata: Object,
+     *   uniqueTags: string[],
+     *   fileName: string
+     * }>} Resolves with parsed data and metadata; rejects with a descriptive
+     *   `Error` when required columns are missing or PapaParse reports an error.
+     */
     loadCsv: (file) => {
         console.log('Loading CSV file:', file.name);
         return new Promise((resolve, reject) => {
@@ -50,6 +80,16 @@ const csvUtils = {
         });
     },
 
+    /**
+     * Persist annotation changes back to a CSV file via the backend proxy.
+     *
+     * Note: this endpoint (`/api/save-csv`) is not implemented in the current
+     * FastAPI backend; calls will fail silently (error is logged only).
+     *
+     * @param {Object[]} messages - Annotated message objects.
+     * @param {string[]} tags - Thread labels.
+     * @param {string} fileName - Target filename on the server.
+     */
     saveChangesToCsv: async (messages, tags, fileName) => {
         try {
             const response = await fetch('/api/save-csv', {
@@ -71,6 +111,17 @@ const csvUtils = {
         }
     },
 
+    /**
+     * Upload a file to the server workspace via the backend proxy.
+     *
+     * Note: this endpoint (`/api/copy-to-files`) is not implemented in the
+     * current FastAPI backend.
+     *
+     * @param {File} file - File to upload.
+     * @param {string} destinationFileName - Target filename on the server.
+     * @returns {Promise<Object>} Server response JSON.
+     * @throws {Error} When the server returns a non-OK status.
+     */
     copyToFiles: async (file, destinationFileName) => {
         const response = await fetch('/api/copy-to-files', {
             method: 'POST',
@@ -91,6 +142,20 @@ const csvUtils = {
         return result;
     },
 
+    /**
+     * Download a file from the server workspace and parse it as CSV.
+     *
+     * Fetches the file from `/api/workspace-file/:fileName`, converts the
+     * response to a `File` object, then delegates to `loadCsv` for consistent
+     * column validation and row normalisation.
+     *
+     * Note: the `/api/workspace-file` endpoint is not implemented in the
+     * current FastAPI backend.
+     *
+     * @param {string} fileName - Filename to load from the server workspace.
+     * @returns {Promise<Object>} Same shape as `loadCsv` resolve value.
+     * @throws {Error} When the fetch fails or column validation fails.
+     */
     loadWorkspaceFile: async (fileName) => {
         try {
             const response = await fetch(`/api/workspace-file/${fileName}`);

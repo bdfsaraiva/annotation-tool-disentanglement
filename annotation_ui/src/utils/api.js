@@ -1,7 +1,30 @@
+/**
+ * @fileoverview Axios HTTP client and all API endpoint wrappers for the LACE platform.
+ *
+ * The default export is a pre-configured `axios` instance with:
+ * - Base URL read from the `API_URL` environment variable (falls back to
+ *   `http://localhost:8000`).
+ * - A **request interceptor** that injects the stored Bearer token into every
+ *   outgoing request.
+ * - A **response interceptor** that automatically attempts a token refresh on
+ *   HTTP 401 responses (one retry per request via `_retry`).  If the refresh
+ *   also fails, both tokens are cleared and the user is redirected to `/login`.
+ *
+ * Named exports group endpoint wrappers by domain:
+ * - `auth`         — login, logout, current-user
+ * - `projects`     — project and chat-room CRUD, CSV import, read-status
+ * - `users`        — admin user management
+ * - `annotations`  — disentanglement annotation CRUD, aggregated view, IAA
+ * - `adjacencyPairs` — adjacency-pair CRUD, CSV import, export
+ */
 import axios from 'axios';
 
 const API_URL = import.meta.env.API_URL || 'http://localhost:8000';
 
+/**
+ * Pre-configured axios instance shared by all endpoint wrappers.
+ * Automatically injects the Bearer token and handles 401 token refresh.
+ */
 const api = axios.create({
     baseURL: API_URL,
     timeout: 15000,
@@ -10,7 +33,7 @@ const api = axios.create({
     },
 });
 
-// Request interceptor to add auth token
+// Inject the stored access token into every outgoing request header.
 api.interceptors.request.use(
     (config) => {
         const token = localStorage.getItem('access_token');
@@ -24,13 +47,15 @@ api.interceptors.request.use(
     }
 );
 
-// Response interceptor to handle token refresh
+// Silently refresh the access token on 401 responses and retry the original
+// request.  The `_retry` flag prevents infinite loops if the refresh also
+// returns a 401.
 api.interceptors.response.use(
     (response) => response,
     async (error) => {
         const originalRequest = error.config;
-        
-        // Handle network errors or server crashes
+
+        // Surface network-level errors (no HTTP response at all) with a clear message.
         if (!error.response) {
             return Promise.reject({
                 message: 'Network error or server is not responding',
@@ -43,10 +68,13 @@ api.interceptors.response.use(
             try {
                 const refreshToken = localStorage.getItem('refresh_token');
                 if (!refreshToken) {
+                    // No refresh token available — force the user to log in again.
                     localStorage.removeItem('access_token');
                     window.location.href = '/login';
                     return Promise.reject(error);
                 }
+                // Use a bare `axios` call (not the intercepted `api` instance) to
+                // avoid triggering the response interceptor again on this refresh call.
                 const response = await axios.post(`${API_URL}/auth/refresh`, {
                     refresh_token: refreshToken,
                 });
@@ -55,6 +83,7 @@ api.interceptors.response.use(
                 originalRequest.headers.Authorization = `Bearer ${access_token}`;
                 return api(originalRequest);
             } catch (err) {
+                // Refresh also failed — clear credentials and redirect to login.
                 localStorage.removeItem('access_token');
                 localStorage.removeItem('refresh_token');
                 window.location.href = '/login';
@@ -65,13 +94,26 @@ api.interceptors.response.use(
     }
 );
 
-// Auth endpoints
+/**
+ * Authentication endpoint wrappers.
+ * @namespace auth
+ */
 export const auth = {
+    /**
+     * Log in with username and password credentials.
+     *
+     * Sends an `application/x-www-form-urlencoded` body (required by the OAuth2
+     * password grant endpoint) and persists both tokens in `localStorage`.
+     *
+     * @param {string} username
+     * @param {string} password
+     * @returns {Promise<Object>} The full token response (access_token, refresh_token, etc.).
+     */
     login: async (username, password) => {
         const formData = new URLSearchParams();
         formData.append('username', username);
         formData.append('password', password);
-        
+
         const response = await api.post('/auth/token', formData, {
             headers: {
                 'Content-Type': 'application/x-www-form-urlencoded',
@@ -82,39 +124,96 @@ export const auth = {
         localStorage.setItem('refresh_token', refresh_token);
         return response.data;
     },
+
+    /**
+     * Clear both tokens from `localStorage` (client-side logout only).
+     * No server-side token revocation is performed.
+     */
     logout: () => {
         localStorage.removeItem('access_token');
         localStorage.removeItem('refresh_token');
     },
+
+    /**
+     * Fetch the profile of the currently authenticated user.
+     * @returns {Promise<Object>} The user object (id, username, is_admin, etc.).
+     */
     getCurrentUser: async () => {
         const response = await api.get('/auth/me');
         return response.data;
     },
 };
 
-// Projects endpoints
+/**
+ * Project, chat-room, and message endpoint wrappers.
+ * Includes both admin-only endpoints (prefixed `/admin/`) and
+ * annotator-accessible endpoints (prefixed `/projects/`).
+ * @namespace projects
+ */
 export const projects = {
-    // Admin endpoints
+    // ---- Admin-only project endpoints ----
+
+    /**
+     * List all projects (admin only).
+     * @returns {Promise<Object[]>} Array of project objects.
+     */
     getProjects: async () => {
         const response = await api.get('/admin/projects');
         return response.data;
     },
+
+    /**
+     * Create a new project (admin only).
+     * @param {Object} projectData - Project fields (name, annotation_type, etc.).
+     * @returns {Promise<Object>} The newly created project.
+     */
     createProject: async (projectData) => {
         const response = await api.post('/admin/projects', projectData);
         return response.data;
     },
+
+    /**
+     * Update an existing project's metadata (admin only).
+     * @param {number} projectId
+     * @param {Object} updates - Partial project fields to update.
+     * @returns {Promise<Object>} The updated project.
+     */
     updateProject: async (projectId, updates) => {
         const response = await api.put(`/admin/projects/${projectId}`, updates);
         return response.data;
     },
+
+    /**
+     * Retrieve a single project by ID (accessible to assigned users).
+     * @param {number} projectId
+     * @returns {Promise<Object>} The project object.
+     */
     getProject: async (projectId) => {
         const response = await api.get(`/projects/${projectId}`);
         return response.data;
     },
+
+    /**
+     * Delete a project and all its data (admin only).
+     * @param {number} projectId
+     * @returns {Promise<true>}
+     */
     deleteProject: async (projectId) => {
         await api.delete(`/admin/projects/${projectId}`);
         return true;
     },
+    /**
+     * Upload a CSV file and create a new chat room + import its messages (admin only).
+     *
+     * Calls the single-step `POST /admin/projects/{id}/import-chat-room-csv` endpoint.
+     * An optional `onProgress` callback receives a percentage (0–100) as the file uploads.
+     *
+     * @param {number} projectId
+     * @param {File} file - The CSV file to upload.
+     * @param {Function} [onProgress] - Called with upload percentage during the upload.
+     * @returns {Promise<Object>} `ChatRoomImportResponse` with room details and import stats.
+     * @throws {Error} With a human-readable message on network or server errors.
+     */
     importCsv: async (projectId, file, onProgress) => {
         try {
             const formData = new FormData();
@@ -176,27 +275,67 @@ export const projects = {
         }
     },
 
-    // Regular project endpoints
+    // ---- Annotator-accessible project endpoints ----
+
+    /**
+     * List all projects visible to the current user.
+     * Admins receive all projects; annotators receive only assigned projects.
+     * @returns {Promise<Object>} `ProjectList` with a `projects` array.
+     */
     listProjects: async () => {
         const response = await api.get('/projects/');
         return response.data;
     },
+
+    /**
+     * Get all users assigned to a project.
+     * @param {number} projectId
+     * @returns {Promise<Object[]>} Array of user objects.
+     */
     getProjectUsers: async (projectId) => {
         const response = await api.get(`/projects/${projectId}/users`);
         return response.data;
     },
+
+    /**
+     * Assign a user to a project (admin only).
+     * @param {number} projectId
+     * @param {number} userId
+     * @returns {Promise<true>}
+     */
     assignUser: async (projectId, userId) => {
         await api.post(`/projects/${projectId}/assign/${userId}`);
         return true;
     },
+
+    /**
+     * Remove a user's assignment from a project (admin only).
+     * @param {number} projectId
+     * @param {number} userId
+     * @returns {Promise<true>}
+     */
     removeUser: async (projectId, userId) => {
         await api.delete(`/projects/${projectId}/assign/${userId}`);
         return true;
     },
+
+    /**
+     * Get all chat rooms in a project.
+     * @param {number} projectId
+     * @returns {Promise<Object[]>} Array of chat room objects.
+     */
     getChatRooms: async (projectId) => {
         const response = await api.get(`/projects/${projectId}/chat-rooms`);
         return response.data;
     },
+
+    /**
+     * Preview the first N rows of a CSV file before importing (admin only).
+     * @param {number} projectId
+     * @param {File} file
+     * @param {number} [limit=20] - Maximum rows to include in the preview.
+     * @returns {Promise<Object>} `CSVPreviewResponse` with rows and warnings.
+     */
     previewImportCsv: async (projectId, file, limit = 20) => {
         try {
             const formData = new FormData();
@@ -232,18 +371,48 @@ export const projects = {
             );
         }
     },
+    /**
+     * Delete a chat room and all its messages/annotations (admin only).
+     * @param {number} chatRoomId
+     * @returns {Promise<true>}
+     */
     deleteChatRoom: async (chatRoomId) => {
         await api.delete(`/admin/chat-rooms/${chatRoomId}`);
         return true;
     },
+
+    /**
+     * Update a chat room's name or description (admin only).
+     * @param {number} chatRoomId
+     * @param {Object} updates - Partial fields (name, description).
+     * @returns {Promise<Object>} The updated chat room.
+     */
     updateChatRoom: async (chatRoomId, updates) => {
         const response = await api.put(`/admin/chat-rooms/${chatRoomId}`, updates);
         return response.data;
     },
+
+    /**
+     * Retrieve a single chat room within a project.
+     * @param {number} projectId
+     * @param {number} roomId
+     * @returns {Promise<Object>} The chat room object.
+     */
     getChatRoom: async (projectId, roomId) => {
         const response = await api.get(`/projects/${projectId}/chat-rooms/${roomId}`);
         return response.data;
     },
+
+    /**
+     * Fetch all messages for a chat room, automatically paginating through all pages.
+     *
+     * The backend paginates with `skip`/`limit`; this function collects all pages
+     * into a single flat array, using a page size of 200 to minimise round-trips.
+     *
+     * @param {number} projectId
+     * @param {number} roomId
+     * @returns {Promise<{messages: Object[], total: number}>}
+     */
     getChatMessages: async (projectId, roomId) => {
         const pageSize = 200;
         let skip = 0;
@@ -266,25 +435,62 @@ export const projects = {
 
         return { messages: allMessages, total };
     },
+
+    /**
+     * Get the current annotator's completion flag for a chat room.
+     * Returns a virtual `{is_completed: false}` record if not yet set.
+     * @param {number} projectId
+     * @param {number} roomId
+     * @returns {Promise<Object>} `ChatRoomCompletion` object.
+     */
     getChatRoomCompletion: async (projectId, roomId) => {
         const response = await api.get(`/projects/${projectId}/chat-rooms/${roomId}/completion`);
         return response.data;
     },
+
+    /**
+     * Set or clear the current annotator's completion flag for a chat room.
+     * @param {number} projectId
+     * @param {number} roomId
+     * @param {boolean} isCompleted
+     * @returns {Promise<Object>} The updated `ChatRoomCompletion` record.
+     */
     updateChatRoomCompletion: async (projectId, roomId, isCompleted) => {
         const response = await api.put(`/projects/${projectId}/chat-rooms/${roomId}/completion`, {
             is_completed: isCompleted
         });
         return response.data;
     },
+
+    /**
+     * Fetch read/unread flags for all messages in a room for the current annotator.
+     *
+     * Converts the array response (`[{message_id, is_read}]`) into a plain object
+     * map (`{message_id: is_read}`) for O(1) lookups.
+     *
+     * @param {number} projectId
+     * @param {number} roomId
+     * @returns {Promise<Object>} Map of `{[messageId]: boolean}`.
+     */
     getReadStatus: async (projectId, roomId) => {
         const response = await api.get(`/projects/${projectId}/chat-rooms/${roomId}/read-status`);
-        // Returns array of {message_id, is_read}; convert to {message_id: is_read} map
         const map = {};
         (response.data || []).forEach(item => { map[item.message_id] = item.is_read; });
         return map;
     },
+
+    /**
+     * Batch-update read/unread flags for multiple messages.
+     *
+     * Accepts a `{messageId: isRead}` map and converts it to the array format
+     * expected by the backend batch endpoint.
+     *
+     * @param {number} projectId
+     * @param {number} roomId
+     * @param {Object} statusMap - `{[messageId]: boolean}` map of new values.
+     * @returns {Promise<void>}
+     */
     updateReadStatus: async (projectId, roomId, statusMap) => {
-        // statusMap: {message_id: is_read}
         const statuses = Object.entries(statusMap).map(([mid, isRead]) => ({
             message_id: Number(mid),
             is_read: Boolean(isRead),
@@ -293,49 +499,131 @@ export const projects = {
     },
 };
 
-// Users endpoints
+/**
+ * Admin user management endpoint wrappers.
+ * All methods require admin privileges on the backend.
+ * @namespace users
+ */
 export const users = {
+    /**
+     * List all registered users.
+     * @returns {Promise<Object[]>} Array of user objects.
+     */
     getUsers: async () => {
         const response = await api.get('/admin/users');
         return response.data;
     },
+
+    /**
+     * Create a new user account.
+     * @param {Object} userData - Fields: username, password, is_admin.
+     * @returns {Promise<Object>} The newly created user.
+     */
     createUser: async (userData) => {
         const response = await api.post('/admin/users', userData);
         return response.data;
     },
+
+    /**
+     * Delete a user account.
+     * @param {number} userId
+     * @returns {Promise<true>}
+     */
     deleteUser: async (userId) => {
         await api.delete(`/admin/users/${userId}`);
         return true;
     },
+
+    /**
+     * Update a user's username, password, or admin flag.
+     * @param {number} userId
+     * @param {Object} updates - Partial user fields.
+     * @returns {Promise<Object>} The updated user.
+     */
     updateUser: async (userId, updates) => {
         const response = await api.put(`/admin/users/${userId}`, updates);
         return response.data;
     },
 };
 
-// Annotations endpoints
+/**
+ * Disentanglement annotation endpoint wrappers (plus admin annotation tools).
+ *
+ * Annotation isolation (Pillar 1) is enforced server-side: annotators receive
+ * only their own annotations from the GET endpoints; admins receive all.
+ * @namespace annotations
+ */
 export const annotations = {
+    /**
+     * Get all annotations for a specific message.
+     * Respects Pillar 1 isolation on the backend.
+     * @param {number} projectId
+     * @param {number} messageId
+     * @returns {Promise<Object[]>} Array of annotation objects.
+     */
     getMessageAnnotations: async (projectId, messageId) => {
         const response = await api.get(`/projects/${projectId}/messages/${messageId}/annotations/`);
         return response.data;
     },
+
+    /**
+     * Get all annotations for a chat room.
+     * Annotators see only their own; admins see all annotators'.
+     * @param {number} projectId
+     * @param {number} chatRoomId
+     * @returns {Promise<Object[]>} Array of annotation objects.
+     */
     getChatRoomAnnotations: async (projectId, chatRoomId) => {
         const response = await api.get(`/projects/${projectId}/chat-rooms/${chatRoomId}/annotations/`);
         return response.data;
     },
+
+    /**
+     * Create a disentanglement annotation for a message.
+     * @param {number} projectId
+     * @param {number} messageId
+     * @param {Object} annotationData - Must include `thread_id`.
+     * @returns {Promise<Object>} The newly created annotation.
+     */
     createAnnotation: async (projectId, messageId, annotationData) => {
         const response = await api.post(`/projects/${projectId}/messages/${messageId}/annotations/`, annotationData);
         return response.data;
     },
+
+    /**
+     * Delete a disentanglement annotation.
+     * Only the annotation's owner (or an admin) may delete it.
+     * @param {number} projectId
+     * @param {number} messageId
+     * @param {number} annotationId
+     * @returns {Promise<true>}
+     */
     deleteAnnotation: async (projectId, messageId, annotationId) => {
         await api.delete(`/projects/${projectId}/messages/${messageId}/annotations/${annotationId}`);
         return true;
     },
+
+    /**
+     * Get all annotations created by the current user in a project, enriched
+     * with chat-room name and message text preview.
+     * @param {number} projectId
+     * @returns {Promise<Object[]>} Array of enriched annotation objects.
+     */
     getMyAnnotations: async (projectId) => {
         const response = await api.get(`/projects/${projectId}/annotations/my`);
         return response.data;
     },
-    // PHASE 2: ANNOTATION IMPORT
+
+    /**
+     * Import disentanglement annotations from a CSV file attributed to a user (admin only).
+     *
+     * @param {number} chatRoomId
+     * @param {number} userId - The annotator to attribute the imported annotations to.
+     * @param {File} file - CSV file with `turn_id` and `thread_id` columns.
+     * @param {Function} [onProgress] - Upload progress callback (0–100).
+     * @returns {Promise<Object>} `AnnotationImportResponse` with counts and errors.
+     * @throws {Error} With a human-readable message on failure.
+     */
     importAnnotations: async (chatRoomId, userId, file, onProgress) => {
         try {
             const formData = new FormData();
@@ -394,17 +682,40 @@ export const annotations = {
             );
         }
     },
-    // PHASE 3: AGGREGATED ANNOTATIONS FOR ANALYSIS
+    /**
+     * Get all annotations for a chat room grouped by message (admin only).
+     * Used by the aggregated view to show cross-annotator concordance/discordance.
+     * @param {number} chatRoomId
+     * @returns {Promise<Object>} `AggregatedAnnotationsResponse`.
+     */
     getAggregatedAnnotations: async (chatRoomId) => {
         const response = await api.get(`/admin/chat-rooms/${chatRoomId}/aggregated-annotations`);
         return response.data;
     },
-    // PHASE 5: INTER-ANNOTATOR AGREEMENT (IAA)
+
+    /**
+     * Calculate Inter-Annotator Agreement for a chat room (admin only).
+     *
+     * For adjacency-pairs projects, pass `alpha` to override the project's
+     * configured α without saving the change.
+     *
+     * @param {number} chatRoomId
+     * @param {number|null} [alpha=null] - Override IAA alpha (0–1).
+     * @returns {Promise<Object>} `ChatRoomIAA` with pairwise scores and annotator lists.
+     */
     getChatRoomIAA: async (chatRoomId, alpha = null) => {
         const params = alpha !== null ? { alpha } : {};
         const response = await api.get(`/admin/chat-rooms/${chatRoomId}/iaa`, { params });
         return response.data;
     },
+
+    /**
+     * Preview an annotations CSV before importing (admin only).
+     * @param {number} chatRoomId
+     * @param {File} file
+     * @param {number} [limit=20]
+     * @returns {Promise<Object>} `AnnotationPreviewResponse`.
+     */
     previewImportAnnotations: async (chatRoomId, file, limit = 20) => {
         try {
             const formData = new FormData();
@@ -440,6 +751,14 @@ export const annotations = {
             );
         }
     },
+    /**
+     * Import annotations for multiple annotators from a batch JSON file (admin only).
+     * @param {number} chatRoomId
+     * @param {File} file - JSON file conforming to `BatchAnnotationImport` schema.
+     * @param {Function} [onProgress] - Upload progress callback (0–100).
+     * @returns {Promise<Object>} `BatchAnnotationImportResponse`.
+     * @throws {Error} With a human-readable message on failure.
+     */
     importBatchAnnotations: async (chatRoomId, file, onProgress) => {
         try {
             const formData = new FormData();
@@ -487,6 +806,13 @@ export const annotations = {
             );
         }
     },
+    /**
+     * Preview a batch annotation JSON file before committing (admin only).
+     * @param {number} chatRoomId
+     * @param {File} file
+     * @param {number} [limit=10]
+     * @returns {Promise<Object>} `BatchAnnotationPreviewResponse`.
+     */
     previewBatchAnnotations: async (chatRoomId, file, limit = 10) => {
         try {
             const formData = new FormData();
@@ -522,18 +848,37 @@ export const annotations = {
             );
         }
     },
+    /**
+     * Get a summary of which annotators have marked a room as complete (admin only).
+     * @param {number} chatRoomId
+     * @returns {Promise<Object>} `ChatRoomCompletionSummary`.
+     */
     getChatRoomCompletionSummary: async (chatRoomId) => {
         const response = await api.get(`/admin/chat-rooms/${chatRoomId}/completion-summary`);
         return response.data;
     },
+
+    /**
+     * Get the annotation status of an adjacency-pairs chat room (admin only).
+     * @param {number} chatRoomId
+     * @returns {Promise<Object>} `AdjacencyPairsStatus`.
+     */
     getAdjacencyPairsStatus: async (chatRoomId) => {
         const response = await api.get(`/admin/chat-rooms/${chatRoomId}/adjacency-status`);
         return response.data;
     },
+
+    /**
+     * Get per-message read/unread flags for all annotators in a room (admin only).
+     *
+     * Converts the flat `{entries}` array into a nested map for efficient lookup:
+     * `{[messageId]: {[annotatorUsername]: boolean}}`.
+     *
+     * @param {number} chatRoomId
+     * @returns {Promise<Object>} Nested map `{messageId: {username: isRead}}`.
+     */
     getReadStatusSummary: async (chatRoomId) => {
         const response = await api.get(`/admin/chat-rooms/${chatRoomId}/read-status-summary`);
-        // Returns {chat_room_id, entries: [{message_id, annotator_id, annotator_username, is_read}]}
-        // Convert to {message_id: {annotator_username: is_read}}
         const byMessage = {};
         (response.data?.entries || []).forEach(e => {
             if (!byMessage[e.message_id]) byMessage[e.message_id] = {};
@@ -541,7 +886,17 @@ export const annotations = {
         });
         return byMessage;
     },
-    // EXPORT FUNCTIONALITY
+
+    /**
+     * Export all annotated data for a chat room as a downloadable JSON file.
+     *
+     * Triggers a browser download using a temporary object URL.  The filename
+     * is read from the server's `Content-Disposition` header when available.
+     *
+     * @param {number} chatRoomId
+     * @returns {Promise<true>}
+     * @throws {Error} With a human-readable message on failure.
+     */
     exportChatRoom: async (chatRoomId) => {
         try {
             const response = await api.get(`/admin/chat-rooms/${chatRoomId}/export`, {
@@ -600,20 +955,57 @@ export const annotations = {
     },
 };
 
-// Adjacency Pairs endpoints
+/**
+ * Adjacency-pair annotation endpoint wrappers.
+ * @namespace adjacencyPairs
+ */
 export const adjacencyPairs = {
+    /**
+     * Get all adjacency pairs for a chat room.
+     * Respects Pillar 1 isolation: annotators see their own pairs only.
+     * @param {number} projectId
+     * @param {number} chatRoomId
+     * @returns {Promise<Object[]>} Array of `AdjacencyPairSchema` objects.
+     */
     getChatRoomPairs: async (projectId, chatRoomId) => {
         const response = await api.get(`/projects/${projectId}/chat-rooms/${chatRoomId}/adjacency-pairs/`);
         return response.data;
     },
+
+    /**
+     * Create or update an adjacency pair (upsert by annotator + message pair).
+     * @param {number} projectId
+     * @param {number} chatRoomId
+     * @param {Object} pairData - `{from_message_id, to_message_id, relation_type}`.
+     * @returns {Promise<Object>} The created or updated `AdjacencyPairSchema`.
+     */
     createAdjacencyPair: async (projectId, chatRoomId, pairData) => {
         const response = await api.post(`/projects/${projectId}/chat-rooms/${chatRoomId}/adjacency-pairs/`, pairData);
         return response.data;
     },
+
+    /**
+     * Delete an adjacency pair.
+     * @param {number} projectId
+     * @param {number} chatRoomId
+     * @param {number} pairId
+     * @returns {Promise<true>}
+     */
     deleteAdjacencyPair: async (projectId, chatRoomId, pairId) => {
         await api.delete(`/projects/${projectId}/chat-rooms/${chatRoomId}/adjacency-pairs/${pairId}`);
         return true;
     },
+
+    /**
+     * Bulk-import adjacency pairs from a plain-text CSV file.
+     *
+     * @param {number} projectId
+     * @param {number} chatRoomId
+     * @param {File} file - Plain text file; each line: `turnA,turnB,relation_type`.
+     * @param {'merge'|'replace'} [mode='merge'] - `merge` upserts; `replace`
+     *   deletes the annotator's existing pairs first.
+     * @returns {Promise<Object>} Import result with counts and per-line errors.
+     */
     importAdjacencyPairs: async (projectId, chatRoomId, file, mode = 'merge') => {
         const formData = new FormData();
         formData.append('file', file);
@@ -627,6 +1019,19 @@ export const adjacencyPairs = {
         );
         return response.data;
     },
+
+    /**
+     * Export adjacency pairs as a downloadable text file (or ZIP for all annotators).
+     *
+     * Triggers a browser download.  When `annotatorId` is omitted, the backend
+     * returns a ZIP archive with one file per assigned annotator.
+     *
+     * @param {number} chatRoomId
+     * @param {number|null} [annotatorId=null] - Export a specific annotator, or all if null.
+     * @param {string|null} [filenameOverride=null] - Override the suggested filename.
+     * @returns {Promise<true>}
+     * @throws {Error} With a human-readable message on failure.
+     */
     exportChatRoomPairs: async (chatRoomId, annotatorId = null, filenameOverride = null) => {
         try {
             const response = await api.get(`/admin/chat-rooms/${chatRoomId}/export-adjacency-pairs`, {

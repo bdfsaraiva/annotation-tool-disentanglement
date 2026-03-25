@@ -1,23 +1,46 @@
+/**
+ * @fileoverview IAA analysis page for a single chat room.
+ *
+ * Displays a pairwise inter-annotator agreement matrix rendered by
+ * `IAAMatrix`.  Supports two project types:
+ *
+ * - **Disentanglement**: renders a single percentage-accuracy matrix.
+ *
+ * - **Adjacency pairs**: renders a multi-mode matrix with three switchable
+ *   views (`'combined'`, `'link_f1'`, `'type_accuracy'`).  The `alpha` weight
+ *   in the `LinkF1 × (α + (1−α) × TypeAcc)` combined-IAA formula is editable
+ *   inline; saving persists it to the project record via `updateProject` and
+ *   re-fetches the IAA to show the updated matrix.
+ *
+ * A status banner (Complete / Partial / NotEnoughData / Error) explains the
+ * current analysis quality.
+ */
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { annotations as annotationsApi, projects as projectsApi } from '../utils/api';
 import IAAMatrix from './IAAMatrix';
 import './AnnotationAnalysisPage.css';
 
+/** Ordered cycle of adjacency-pairs view modes. */
 const VIEW_MODES = ['combined', 'link_f1', 'type_accuracy'];
 
+/** Display labels for each view mode. */
 const VIEW_LABELS = {
     combined:      'Combined IAA',
     link_f1:       'Link F1',
     type_accuracy: 'Type Accuracy',
 };
 
+/** Human-readable formula descriptions for each view mode. */
 const VIEW_DESCRIPTIONS = {
     combined:      (alpha) => `LinkF1 × (α + (1−α) × TypeAcc)  |  α = ${alpha}`,
     link_f1:       () => '2 × |agreed links| / (|links A| + |links B|) — ignores relation type',
     type_accuracy: () => 'Proportion of agreed links where both annotators chose the same relation type',
 };
 
+/**
+ * IAA analysis page showing pairwise agreement matrices for a chat room.
+ */
 const AnnotationAnalysisPage = () => {
     const { projectId, roomId } = useParams();
     const navigate = useNavigate();
@@ -34,6 +57,12 @@ const AnnotationAnalysisPage = () => {
     const [isSavingAlpha, setIsSavingAlpha] = useState(false);
     const [alphaError, setAlphaError] = useState(null);
 
+    /**
+     * Fetch (or re-fetch) IAA data, optionally with an explicit alpha override.
+     * Used both on initial load and after the admin updates the alpha value.
+     * @param {number|null} [alpha=null] - When provided, passed as a query
+     *   parameter to compute IAA with a different alpha without persisting it.
+     */
     const fetchIAA = async (alpha = null) => {
         const iaaAnalysis = await annotationsApi.getChatRoomIAA(roomId, alpha);
         setIaaData(iaaAnalysis);
@@ -64,6 +93,12 @@ const AnnotationAnalysisPage = () => {
         fetchData();
     }, [projectId, roomId]);
 
+    /**
+     * Validate, persist, and re-apply the alpha weight for the combined IAA
+     * formula.  Validates that the input is a float in [0, 1], saves it to the
+     * project via `updateProject`, then re-fetches IAA to reflect the change.
+     * @param {React.FormEvent<HTMLFormElement>} e
+     */
     const handleSaveAlpha = async (e) => {
         e.preventDefault();
         const val = parseFloat(alphaInput);
@@ -83,11 +118,19 @@ const AnnotationAnalysisPage = () => {
         }
     };
 
+    /**
+     * Advance to the next view mode in the `VIEW_MODES` cycle.
+     */
     const cycleViewMode = () => {
         const idx = VIEW_MODES.indexOf(viewMode);
         setViewMode(VIEW_MODES[(idx + 1) % VIEW_MODES.length]);
     };
 
+    /**
+     * Map an IAA analysis status key to CSS class and display strings.
+     * @param {string} status - One of: 'Complete', 'Partial', 'NotEnoughData', 'Error'.
+     * @returns {{ class: string, title: string, description: string }}
+     */
     const getStatusInfo = (status) => {
         const statusMap = {
             Complete:      { class: 'status-complete',     title: 'Analysis Complete',     description: 'All assigned annotators have completed their work' },

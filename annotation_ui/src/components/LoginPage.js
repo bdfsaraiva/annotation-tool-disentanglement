@@ -1,14 +1,41 @@
+/**
+ * @fileoverview Public login page for the LACE annotation tool.
+ *
+ * Renders the LACE branding, a username/password form, and inline error
+ * feedback.  On successful authentication the component calls `auth.login`
+ * to obtain tokens (stored by the axios interceptor) then fetches the full
+ * user profile via `auth.getCurrentUser` and passes it to the
+ * `AuthContext.login` helper, which updates global auth state and navigates
+ * the user to their role-appropriate dashboard.
+ */
 import React, { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { auth } from '../utils/api';
 import './LoginPage.css';
 
+/**
+ * Full-page login form component.
+ *
+ * Manages local form state for username, password, and any API error message.
+ * Authentication is a two-step async process: obtain tokens, then fetch the
+ * user profile to populate `AuthContext`.
+ */
 const LoginPage = () => {
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
     const [error, setError] = useState('');
     const { login } = useAuth();
 
+    /**
+     * Submit handler: authenticates the user and updates global auth state.
+     *
+     * Clears any previous error, calls the login API, then — on success —
+     * fetches the current user profile and hands it to `AuthContext.login`.
+     * Displays a user-friendly message from the API response detail if the
+     * request fails (e.g., wrong credentials, rate-limit exceeded).
+     *
+     * @param {React.FormEvent<HTMLFormElement>} e - The form submit event.
+     */
     const handleSubmit = async (e) => {
         e.preventDefault();
         setError('');

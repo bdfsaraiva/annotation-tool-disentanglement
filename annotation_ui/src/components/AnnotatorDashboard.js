@@ -1,3 +1,11 @@
+/**
+ * @fileoverview Landing dashboard for authenticated annotators.
+ *
+ * Fetches the list of projects assigned to the current user and renders them
+ * as a card grid.  The backend `GET /projects` endpoint already applies
+ * annotator isolation (Pillar 1), so no client-side filtering is needed.
+ * An empty state is shown when no projects are assigned yet.
+ */
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { projects } from '../utils/api';
@@ -6,6 +14,13 @@ import LoadingSpinner from './LoadingSpinner';
 import ErrorMessage from './ErrorMessage';
 import './AnnotatorDashboard.css';
 
+/**
+ * Annotator dashboard page component.
+ *
+ * On mount, fetches the projects assigned to the current user.  While loading,
+ * renders a full-page spinner.  On error, renders a retryable error message.
+ * On success, renders a responsive card grid or an empty-state prompt.
+ */
 const AnnotatorDashboard = () => {
     const [projectsList, setProjectsList] = useState([]);
     const [loading, setLoading] = useState(true);

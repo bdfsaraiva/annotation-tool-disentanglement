@@ -1,8 +1,34 @@
+/**
+ * @fileoverview Admin read-only overview of a single chat room.
+ *
+ * Displays a summary statistics panel, import panels for CSV and JSON
+ * annotation imports, an annotator reference grid, and a per-message list
+ * showing each turn's annotation or read-status coverage across all
+ * assigned users.
+ *
+ * The component branches on `project.annotation_type`:
+ *
+ * - **adjacency_pairs**: fetches read-status data (which annotators have
+ *   "read" each turn) and shows a read/unread user breakdown per turn.
+ *   Import panels are hidden because adjacency-pair data is managed
+ *   through the annotator interface.
+ *
+ * - **disentanglement**: fetches all annotations for the room in a single
+ *   bulk request and shows the thread label(s) assigned by each annotator
+ *   per turn, plus a list of annotators who have not yet annotated.
+ *
+ * On fatal fetch error, navigates back to the admin project page and passes
+ * the error message as route state so the project page can surface it.
+ */
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { projects as projectsApi, annotations as annotationsApi } from '../utils/api';
 import './AdminChatRoomView.css';
 
+/**
+ * Admin chat-room detail page with annotation coverage overview and bulk
+ * import utilities.
+ */
 const AdminChatRoomView = () => {
     const { projectId, roomId } = useParams();
     const navigate = useNavigate();
@@ -31,6 +57,13 @@ const AdminChatRoomView = () => {
     const [isBatchPreviewing, setIsBatchPreviewing] = useState(false);
     const [isBatchImporting, setIsBatchImporting] = useState(false);
 
+    /**
+     * Fetch all data required for the admin view in parallel where possible,
+     * then populate annotation/read-status state according to project type.
+     *
+     * On unrecoverable error, navigates back to the project page and passes the
+     * error message via router state for contextual display.
+     */
     const fetchData = useCallback(async () => {
         setLoading(true);
         setError('');
@@ -121,6 +154,11 @@ const AdminChatRoomView = () => {
         fetchData();
     }, [fetchData]);
 
+    /**
+     * Reset annotation-import state when a new file is selected so stale
+     * previews and error messages from a previous file are cleared.
+     * @param {React.ChangeEvent<HTMLInputElement>} event
+     */
     const handleAnnotationFileSelect = (event) => {
         setAnnotationFile(event.target.files[0] || null);
         setAnnotationPreview(null);
@@ -129,6 +167,10 @@ const AdminChatRoomView = () => {
         setAnnotationImportMessage(null);
     };
 
+    /**
+     * Preview the first 20 rows of the selected CSV annotation file without
+     * committing any data to the database.
+     */
     const handleAnnotationPreview = async () => {
         if (!annotationFile) {
             setAnnotationPreviewError('Please select a CSV file.');
@@ -147,6 +189,11 @@ const AdminChatRoomView = () => {
         }
     };
 
+    /**
+     * Import annotations from the selected CSV file for the chosen user.
+     * Requires both a file and a selected user to be set.  Refreshes room
+     * data after a successful import.
+     */
     const handleAnnotationImport = async () => {
         if (!annotationFile || !annotationUserId) {
             setAnnotationImportError('Select a user and a CSV file before importing.');
@@ -171,6 +218,10 @@ const AdminChatRoomView = () => {
         }
     };
 
+    /**
+     * Reset batch-import state when a new JSON file is selected.
+     * @param {React.ChangeEvent<HTMLInputElement>} event
+     */
     const handleBatchFileSelect = (event) => {
         setBatchFile(event.target.files[0] || null);
         setBatchPreview(null);
@@ -179,6 +230,10 @@ const AdminChatRoomView = () => {
         setBatchImportMessage(null);
     };
 
+    /**
+     * Preview the first 10 annotators from the selected JSON batch file
+     * without writing any data.
+     */
     const handleBatchPreview = async () => {
         if (!batchFile) {
             setBatchPreviewError('Please select a JSON file.');
@@ -197,6 +252,10 @@ const AdminChatRoomView = () => {
         }
     };
 
+    /**
+     * Import all annotations from the selected JSON batch file for all
+     * annotators encoded in the file.  Refreshes room data on success.
+     */
     const handleBatchImport = async () => {
         if (!batchFile) {
             setBatchImportError('Select a JSON file before importing.');
@@ -220,11 +279,23 @@ const AdminChatRoomView = () => {
         }
     };
 
+    /**
+     * Return the unique list of annotator usernames who have at least one
+     * annotation on the given message.
+     * @param {number} messageId
+     * @returns {string[]}
+     */
     const getUsersWhoAnnotated = (messageId) => {
         const annotations = messageAnnotations[messageId] || [];
         return [...new Set(annotations.map(ann => ann.annotator_username))];
     };
 
+    /**
+     * Return the list of assigned users who have NOT yet annotated the given
+     * message, used to populate the "Pending" section in the turn card.
+     * @param {number} messageId
+     * @returns {Object[]} Subset of `assignedUsers`.
+     */
     const getUsersWhoDidntAnnotate = (messageId) => {
         const annotatedUsers = getUsersWhoAnnotated(messageId);
         return assignedUsers.filter(user => !annotatedUsers.includes(user.username));

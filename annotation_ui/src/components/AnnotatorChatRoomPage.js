@@ -1,3 +1,35 @@
+/**
+ * @fileoverview Primary annotator interface for a single chat room.
+ *
+ * This is the most complex component in the application.  It handles both
+ * annotation modes:
+ *
+ * **Disentanglement mode**:
+ * - Renders `MessageBubble` components that accept thread-label assignment.
+ * - Maintains `annotationsMap` (messageId → annotation[]) and `threadDetails`
+ *   (threadId → { messages, annotators, annotations }) for the sidebar.
+ * - Tracks `statistics` (annotated/total counts, per-thread breakdowns) for
+ *   the instructions panel progress bar.
+ * - Completion status is managed via the `update_completion` API.
+ *
+ * **Adjacency-pairs mode**:
+ * - Renders `MessageBubble` in `relationMode`; drag-and-drop and right-click
+ *   context-menu interactions create pending pairs.
+ * - `AdjacencyRelationsCanvas` draws curved SVG arcs; `buildAdjacencyLines`
+ *   is called via `useMemo` to produce stable lane assignments.
+ * - Read-status (which turns the annotator has "read") is persisted to both
+ *   `localStorage` (for offline-first responsiveness) and the backend
+ *   (`updateReadStatus`).  Auto-completion is triggered when all turns are read.
+ * - Reply-link click generates a `suggestedRelation` that the `SuggestedRelationEditor`
+ *   lets the annotator confirm or discard.
+ *
+ * Shared infrastructure:
+ * - `useMessagePositions` tracks per-bubble Y coordinates for SVG rendering.
+ * - `useScrollToTop` shows a floating scroll-to-top button.
+ * - Errors surface via a `Modal`-wrapped `ErrorMessage` (dismissible warning).
+ * - `THREAD_COLORS` and `RELATION_COLORS` are fixed palettes cycled by index
+ *   so colours are deterministic across renders without server involvement.
+ */
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { projects as projectsApi, annotations as annotationsApi, adjacencyPairs as adjacencyPairsApi, auth } from '../utils/api';
@@ -12,22 +44,34 @@ import { useMessagePositions } from '../hooks/useMessagePositions';
 import { useScrollToTop } from '../hooks/useScrollToTop';
 import './AnnotatorChatRoomPage.css';
 
+/**
+ * Extract a display-friendly error string from an axios error object.
+ * @param {Error} error
+ * @returns {string}
+ */
 const parseApiError = (error) => {
   if (error.response?.data?.detail) return error.response.data.detail;
   return error.message || 'An unexpected error occurred';
 };
 
+/** Fixed colour palette cycled by thread index for deterministic thread colouring. */
 const THREAD_COLORS = [
   '#3B82F6', '#8B5CF6', '#EF4444', '#10B981', '#F59E0B',
   '#EC4899', '#06B6D4', '#84CC16', '#92400E', '#6B7280',
   '#7C3AED', '#DC2626',
 ];
 
+/** Fixed colour palette cycled by relation-type index for arc colouring in the SVG canvas. */
 const RELATION_COLORS = [
   '#2563EB', '#16A34A', '#DC2626', '#9333EA',
   '#F59E0B', '#0EA5E9', '#14B8A6', '#F97316',
 ];
 
+/**
+ * Full-page annotator interface for a single chat room.
+ *
+ * Route params consumed: `projectId` and `roomId` from the URL.
+ */
 const AnnotatorChatRoomPage = () => {
   const { projectId, roomId } = useParams();
   const navigate = useNavigate();
@@ -81,23 +125,44 @@ const AnnotatorChatRoomPage = () => {
   const { showScrollToTop, scrollToTop } = useScrollToTop(messagesContentRef);
 
   // ── Helpers ──────────────────────────────────────────────────────────────────
+  /**
+   * Build the localStorage key used to persist this user's read-status map for
+   * this specific room.  Scoped to project + room + user to avoid collisions.
+   */
   const getReadStorageKey = useCallback(
     (userId) => `adjpairs-read:${projectId}:${roomId}:${userId}`,
     [projectId, roomId]
   );
 
+  /**
+   * Assign a colour from `THREAD_COLORS` to each thread, cycling through the
+   * palette when there are more threads than colours.
+   * @param {string[]} threads - Ordered array of thread label strings.
+   */
   const assignThreadColors = useCallback((threads) => {
     const colors = {};
     threads.forEach((threadId, index) => { colors[threadId] = THREAD_COLORS[index % THREAD_COLORS.length]; });
     setThreadColors(colors);
   }, []);
 
+  /**
+   * Assign a colour from `RELATION_COLORS` to each relation type.
+   * @param {string[]} types - Array of relation-type label strings.
+   */
   const assignRelationTypeColors = useCallback((types) => {
     const colors = {};
     types.forEach((type, index) => { colors[type] = RELATION_COLORS[index % RELATION_COLORS.length]; });
     setRelationTypeColors(colors);
   }, []);
 
+  /**
+   * Produce a short (≤4 char) abbreviation of a relation-type label for use
+   * as an SVG arc label.  Single-word types use the first 3 characters;
+   * multi-word/hyphenated/underscored types use the initial of each word.
+   *
+   * @param {string} relationType
+   * @returns {string} Upper-case abbreviation.
+   */
   const abbreviateRelationType = useCallback((relationType) => {
     if (!relationType) return '';
     const words = relationType.split(/[\s_-]+/).filter(Boolean);
@@ -105,6 +170,13 @@ const AnnotatorChatRoomPage = () => {
     return words.map((w) => w[0]).join('').slice(0, 4).toUpperCase();
   }, []);
 
+  /**
+   * Transform a flat annotation array into the keyed maps required for
+   * rendering.  Populates `annotationsMap`, `allThreads`, `threadDetails`, and
+   * thread colour assignments.
+   *
+   * @param {Object[]} annotationsData - Full annotation list for the room.
+   */
   const processAnnotations = (annotationsData) => {
     const newAnnotationsMap = {};
     const threadsSet = new Set();
@@ -127,6 +199,16 @@ const AnnotatorChatRoomPage = () => {
     assignThreadColors(threads);
   };
 
+  /**
+   * Compute annotation progress statistics and update the `statistics` state.
+   *
+   * Counts unique annotated message IDs (not annotation count, which would
+   * double-count multi-annotator messages) and builds per-thread message and
+   * annotator counts by collapsing intermediate `Set` objects.
+   *
+   * @param {Object[]} messagesData - All messages in the room.
+   * @param {Object[]} annotationsData - All annotations in the room.
+   */
   const calculateStatistics = useCallback((messagesData, annotationsData) => {
     const totalMessages = messagesData.length;
     const annotatedMessageIds = new Set(annotationsData.map(a => a.message_id));
@@ -153,6 +235,15 @@ const AnnotatorChatRoomPage = () => {
   }, []);
 
   // ── Data fetching ─────────────────────────────────────────────────────────────
+  /**
+   * Fetch all data required for the annotation view in a single coordinated
+   * async flow.
+   *
+   * Fetches project metadata first (synchronously) to determine which
+   * mode-specific requests to include in the subsequent `Promise.all`.  The
+   * adjacency-pairs branch fetches pairs and read-status; the disentanglement
+   * branch fetches all annotations for the room.
+   */
   const fetchChatRoomData = useCallback(async () => {
     if (isNaN(parseInt(projectId, 10)) || isNaN(parseInt(roomId, 10))) {
       setError('Invalid Project or Chat Room ID.');
@@ -220,6 +311,10 @@ const AnnotatorChatRoomPage = () => {
   useEffect(() => { requestPositionUpdate(); }, [showInstructions, annotationMode, requestPositionUpdate]);
 
   // ── Completion sync ───────────────────────────────────────────────────────────
+  /**
+   * Persist the completion flag to the backend and update local state.
+   * @param {boolean} nextValue - `true` to mark the room as complete.
+   */
   const syncCompletionStatus = useCallback(async (nextValue) => {
     setIsCompletionSaving(true);
     try {
@@ -276,6 +371,12 @@ const AnnotatorChatRoomPage = () => {
   }, [contextMenu.visible]);
 
   // ── Annotation handlers ───────────────────────────────────────────────────────
+  /**
+   * Create a disentanglement annotation for the given message and refresh all
+   * annotation state.
+   * @param {number} messageId
+   * @param {string} threadName - Thread label to assign.
+   */
   const handleCreateAnnotation = async (messageId, threadName) => {
     setIsSubmitting(true);
     try {
@@ -290,6 +391,11 @@ const AnnotatorChatRoomPage = () => {
     }
   };
 
+  /**
+   * Delete a disentanglement annotation and refresh all annotation state.
+   * @param {number} messageId
+   * @param {number} annotationId
+   */
   const handleDeleteAnnotation = async (messageId, annotationId) => {
     setIsSubmitting(true);
     try {
@@ -305,18 +411,36 @@ const AnnotatorChatRoomPage = () => {
   };
 
   // ── Adjacency pair handlers ───────────────────────────────────────────────────
+  /**
+   * Re-fetch the current user's adjacency pairs for this room and update state.
+   * Returns the fresh array so callers can use it without waiting for a React
+   * re-render.
+   */
   const refreshAdjacencyPairs = useCallback(async () => {
     const pairs = await adjacencyPairsApi.getChatRoomPairs(projectId, roomId);
     setAdjacencyPairs(pairs);
     return pairs;
   }, [projectId, roomId]);
 
+  /**
+   * Map of `{messageId: listIndex}` for O(1) position look-up in direction
+   * enforcement (adjacency pairs may only link a later turn to an earlier one).
+   */
   const messageIndexMap = useMemo(() => {
     const map = {};
     messages.forEach((msg, idx) => { map[msg.id] = idx; });
     return map;
   }, [messages]);
 
+  /**
+   * Return `true` if linking `fromId` → `toId` is valid, i.e., `toId` appears
+   * before `fromId` in the message list (SPP must come after FPP).  Returns
+   * `true` defensively when either ID is missing from the index.
+   *
+   * @param {number|null} fromId - SPP message ID.
+   * @param {number|null} toId - FPP message ID.
+   * @returns {boolean}
+   */
   const isBackwardLinkAllowed = useCallback((fromId, toId) => {
     if (fromId == null || toId == null) return true;
     const fromIndex = messageIndexMap[fromId];
@@ -325,11 +449,21 @@ const AnnotatorChatRoomPage = () => {
     return toIndex < fromIndex;
   }, [messageIndexMap]);
 
+  /**
+   * Record the drag source when a bubble drag begins in relation mode.
+   * @param {number} messageId
+   */
   const handlePairDragStart = (messageId) => {
     setDragSourceMessageId(messageId);
     setPairSourceMessageId(messageId);
   };
 
+  /**
+   * Complete a drag-and-drop pair creation.  Validates direction (SPP must
+   * come after FPP), then opens the relation-type modal for the annotator to
+   * confirm.
+   * @param {number} targetMessageId - The drop-target message (intended FPP).
+   */
   const handlePairDrop = (targetMessageId) => {
     if (!dragSourceMessageId || dragSourceMessageId === targetMessageId) {
       setDragSourceMessageId(null);
@@ -346,6 +480,12 @@ const AnnotatorChatRoomPage = () => {
     setShowPairModal(true);
   };
 
+  /**
+   * Right-click handler in relation mode.  First click sets the source (SPP);
+   * second click on a different bubble opens the relation-type context menu.
+   * @param {number} messageId
+   * @param {React.MouseEvent} event
+   */
   const handlePairContextMenu = (messageId, event) => {
     if (annotationMode !== 'adjacency_pairs') return;
     event.preventDefault();
@@ -356,6 +496,11 @@ const AnnotatorChatRoomPage = () => {
     setContextMenu({ visible: true, x: event.clientX, y: event.clientY, targetMessageId: messageId });
   };
 
+  /**
+   * Confirm creation of the pending pair (from the drag-and-drop modal) with
+   * the selected relation type.
+   * @param {string} relationType
+   */
   const handleCreateAdjacencyPair = async (relationType) => {
     if (pendingPair && !isBackwardLinkAllowed(pendingPair.from, pendingPair.to)) {
       setError('You can only link a turn to an earlier turn.');
@@ -383,6 +528,11 @@ const AnnotatorChatRoomPage = () => {
     }
   };
 
+  /**
+   * Create a pair directly from the right-click context menu (no modal).
+   * @param {string} relationType - Selected relation type from the context menu.
+   * @param {number} targetMessageId - The FPP message chosen by right-click.
+   */
   const handleCreateAdjacencyPairDirect = async (relationType, targetMessageId) => {
     if (!isBackwardLinkAllowed(pairSourceMessageId, targetMessageId)) {
       setError('You can only link a turn to an earlier turn.');
@@ -404,6 +554,10 @@ const AnnotatorChatRoomPage = () => {
     }
   };
 
+  /**
+   * Delete an adjacency pair and deselect it if it was selected.
+   * @param {number} pairId
+   */
   const handleDeleteAdjacencyPair = async (pairId) => {
     setIsSubmitting(true);
     try {
@@ -417,6 +571,14 @@ const AnnotatorChatRoomPage = () => {
     }
   };
 
+  /**
+   * Change the relation type of an existing pair using a delete-then-create
+   * pattern (the API has no PATCH endpoint for relation type).  After
+   * creation, the newly created pair is located in the refreshed list and
+   * selected so the editor panel remains open.
+   * @param {Object} pair - Existing pair record.
+   * @param {string} relationType - New relation type label.
+   */
   const handleUpdateAdjacencyPair = async (pair, relationType) => {
     if (!pair || pair.relation_type === relationType) return;
     setIsSubmitting(true);
@@ -435,6 +597,16 @@ const AnnotatorChatRoomPage = () => {
     }
   };
 
+  /**
+   * Handle a reply-indicator click in adjacency-pairs mode.
+   *
+   * Looks up the message whose `turn_id` matches the reply reference and, if
+   * the direction is valid, creates a `suggestedRelation` that the
+   * `SuggestedRelationEditor` presents for confirmation.
+   *
+   * @param {number} currentMessageId - ID of the message whose reply badge was clicked.
+   * @param {string|number} replyToTurnId - The turn_id value from the reply reference.
+   */
   const handleReplyClick = useCallback((currentMessageId, replyToTurnId) => {
     if (annotationMode !== 'adjacency_pairs') return;
     if (!replyToTurnId) return;
@@ -446,6 +618,9 @@ const AnnotatorChatRoomPage = () => {
     setSelectedRelationId(null);
   }, [annotationMode, messages, isBackwardLinkAllowed]);
 
+  /**
+   * Confirm and persist the reply-link suggested adjacency pair.
+   */
   const handleConfirmSuggestedRelation = useCallback(async () => {
     if (!suggestedRelation || !suggestedRelationType) return;
     if (!isBackwardLinkAllowed(suggestedRelation.sppId, suggestedRelation.fppId)) {
@@ -468,16 +643,33 @@ const AnnotatorChatRoomPage = () => {
   }, [suggestedRelation, suggestedRelationType, isBackwardLinkAllowed, projectId, roomId, refreshAdjacencyPairs]);
 
   // ── Interaction handlers ──────────────────────────────────────────────────────
+  /**
+   * Toggle highlighting for all turns from the clicked user.  Clears any
+   * active thread highlight so only one type of highlight is active at a time.
+   * @param {string} userId
+   */
   const handleUserClick = (userId) => {
     setHighlightedUserId(highlightedUserId === userId ? null : userId);
     setHighlightedThreadId(null);
   };
 
+  /**
+   * Toggle highlighting for all turns in the clicked thread.  Clears any
+   * active user highlight.
+   * @param {string} threadId
+   */
   const handleThreadClick = (threadId) => {
     setHighlightedThreadId(highlightedThreadId === threadId ? null : threadId);
     setHighlightedUserId(null);
   };
 
+  /**
+   * Highlight the reply chain when the reply indicator is hovered.  Resolves
+   * `replyToTurnId` to a message object, then highlights both the current
+   * message and its reply target by storing their IDs in `replyHoverIds`.
+   * @param {number} currentMessageId
+   * @param {string|number} replyToTurnId
+   */
   const handleReplyHover = (currentMessageId, replyToTurnId) => {
     if (!replyToTurnId) { setReplyHoverIds(null); return; }
     const replyToMessage = messages.find(msg => String(msg.turn_id) === String(replyToTurnId));
@@ -485,6 +677,12 @@ const AnnotatorChatRoomPage = () => {
     setReplyHoverIds(new Set([String(currentMessageId), String(replyToMessage.id)]));
   };
 
+  /**
+   * Scroll a specific message into view and briefly apply a highlight CSS
+   * class to draw the user's attention to it.  Used when clicking a preview
+   * row in `SmartThreadCard`.
+   * @param {number} messageId
+   */
   const handleMessageSelect = (messageId) => {
     const el = document.querySelector(`[data-message-id="${messageId}"]`);
     if (el) {
@@ -494,6 +692,12 @@ const AnnotatorChatRoomPage = () => {
     }
   };
 
+  /**
+   * Fire-and-forget backend sync for the current read-status map.  Errors are
+   * logged but not surfaced to the user because the primary store is
+   * `localStorage`; the backend is a secondary persistence layer.
+   * @param {Object.<number, boolean>} statusMap - Map of `{messageId: isRead}`.
+   */
   const syncReadStatusToBackend = useCallback((statusMap) => {
     if (annotationMode !== 'adjacency_pairs') return;
     projectsApi.updateReadStatus(projectId, roomId, statusMap).catch(err => {
@@ -501,6 +705,11 @@ const AnnotatorChatRoomPage = () => {
     });
   }, [annotationMode, projectId, roomId]);
 
+  /**
+   * Toggle the read flag for a single turn and sync the updated map to the
+   * backend.
+   * @param {number} messageId
+   */
   const handleReadToggle = useCallback((messageId) => {
     setReadStatus(prev => {
       const next = { ...prev, [messageId]: !prev[messageId] };
@@ -509,11 +718,20 @@ const AnnotatorChatRoomPage = () => {
     });
   }, [syncReadStatusToBackend]);
 
+  /**
+   * Open the "mark all as read / unread" confirmation modal.  The `nextValue`
+   * is derived from `allRead` so the button toggles correctly.
+   */
   const handleMarkAllAsRead = () => {
     if (messages.length === 0) return;
     setConfirmMarkAll({ open: true, nextValue: !allRead });
   };
 
+  /**
+   * Apply the bulk read/unread toggle confirmed by the user.  Builds a new
+   * status map with all messages set to `confirmMarkAll.nextValue`, syncs to
+   * the backend, and closes the confirmation modal.
+   */
   const applyMarkAll = useCallback(() => {
     const nextStatus = {};
     messages.forEach(msg => { nextStatus[msg.id] = confirmMarkAll.nextValue; });

@@ -1,3 +1,20 @@
+"""
+Annotator-facing endpoints for projects, chat rooms, messages, completions, and read status.
+
+All routes in this module are mounted under the ``/projects`` prefix and are
+accessible to any authenticated user (admins or annotators), with access-control
+logic applied inside each handler:
+
+- **Project listing / detail** — admins see all; annotators see only assigned projects.
+- **User assignment** — admin-only (enforced inline, not via a dependency).
+- **Chat rooms / messages** — only accessible to users assigned to the parent project.
+- **Annotations** — Pillar 1 isolation: annotators see their own annotations only;
+  admins see all annotations for the room.
+- **Completion** — per-annotator flag; GET returns a virtual ``is_completed=False``
+  record if none exists rather than 404.
+- **Read status** — per-annotator, per-message flags; GET returns the current map,
+  PUT accepts a batch update.
+"""
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List
@@ -25,14 +42,26 @@ from .. import crud
 
 router = APIRouter()
 
-# Removed redundant create_project endpoint. Admin creation is handled in admin.py
+# Admin-only project creation is handled in api/admin.py; this router does not
+# expose a creation endpoint to avoid duplication.
 
 @router.get("/", response_model=ProjectList)
 async def list_user_projects(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
-):
-    """List all projects assigned to the current user"""
+) -> ProjectList:
+    """
+    Return a list of projects visible to the current user.
+
+    Admins receive all projects.  Regular annotators receive only the projects
+    to which they have been explicitly assigned via a ``ProjectAssignment`` row.
+
+    Returns:
+        A ``ProjectList`` wrapper containing the matching ``Project`` objects.
+
+    Raises:
+        HTTPException: 500 for unexpected database errors.
+    """
     try:
         if current_user.is_admin:
             # Admins can see all projects
@@ -58,8 +87,24 @@ async def get_project(
     project_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
-):
-    """Get a specific project if the user has access"""
+) -> Project:
+    """
+    Retrieve a single project by its primary key.
+
+    Access control is applied inline: non-admin users receive a 403 if they
+    do not have a ``ProjectAssignment`` for the requested project.
+
+    Args:
+        project_id: Primary key of the project.
+
+    Returns:
+        The ``Project`` object.
+
+    Raises:
+        HTTPException: 404 if the project does not exist.
+        HTTPException: 403 if the user is not assigned to the project.
+        HTTPException: 500 for unexpected database errors.
+    """
     try:
         # First check if project exists
         project = db.query(Project).filter(Project.id == project_id).first()
@@ -102,8 +147,23 @@ async def assign_user_to_project(
     user_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
-):
-    """Assign a user to a project (admin only)"""
+) -> None:
+    """
+    Grant a user access to a project by creating a ``ProjectAssignment`` row.
+
+    This operation is idempotent: if the user is already assigned, the endpoint
+    returns 204 without raising an error.
+
+    Args:
+        project_id: Primary key of the target project.
+        user_id: Primary key of the user to assign.
+        current_user: Authenticated user making the request.
+
+    Raises:
+        HTTPException: 403 if the requesting user is not an admin.
+        HTTPException: 404 if the project or user does not exist.
+        HTTPException: 500 for unexpected database errors.
+    """
     if not current_user.is_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -162,8 +222,22 @@ async def remove_user_from_project(
     user_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
-):
-    """Remove a user from a project (admin only)"""
+) -> None:
+    """
+    Revoke a user's access to a project by deleting their ``ProjectAssignment``.
+
+    If the user is not currently assigned the request is silently ignored (no
+    error is raised) so DELETE is safe to call idempotently.
+
+    Args:
+        project_id: Primary key of the project.
+        user_id: Primary key of the user to unassign.
+        current_user: Authenticated user making the request.
+
+    Raises:
+        HTTPException: 403 if the requesting user is not an admin.
+        HTTPException: 500 for unexpected database errors.
+    """
     if not current_user.is_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -197,8 +271,24 @@ async def get_project_users(
     project_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
-):
-    """Get all users assigned to a project"""
+) -> List[User]:
+    """
+    Return all users assigned to a project.
+
+    Both admins and project members can call this endpoint, but non-members
+    receive a 403.
+
+    Args:
+        project_id: Primary key of the project.
+
+    Returns:
+        List of ``User`` objects for every annotator assigned to the project.
+
+    Raises:
+        HTTPException: 404 if the project does not exist.
+        HTTPException: 403 if the user is not assigned to the project.
+        HTTPException: 500 for unexpected database errors.
+    """
     try:
         # First check if project exists and user has access
         project = db.query(Project).filter(Project.id == project_id).first()
@@ -253,17 +343,35 @@ def get_project_chat_rooms(
     project_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
-):
-    """Get all chat rooms the user has access to within a project"""
-    # Verify project exists and user has access
+) -> List[ChatRoom]:
+    """
+    Return all chat rooms in a project.
+
+    Access is verified by checking whether the user is assigned to the project.
+    The 404/403 distinction is preserved: if the project does not exist the
+    response is 404; if it exists but the user has no assignment the response
+    is 403.
+
+    Args:
+        project_id: Primary key of the project.
+
+    Returns:
+        List of ``ChatRoom`` objects belonging to the project.
+
+    Raises:
+        HTTPException: 404 if the project does not exist.
+        HTTPException: 403 if the user is not assigned to the project.
+    """
+    # Filter by assignment for non-admin users in a single query to avoid a
+    # separate lookup for the common (authorised) case.
     project_query = db.query(Project).filter(Project.id == project_id)
     if not current_user.is_admin:
         project_query = project_query.filter(Project.assignments.any(user_id=current_user.id))
-    
+
     project = project_query.first()
-    
+
     if not project:
-         # Re-check existence without access constraint for 404 vs 403
+        # Re-check existence without access constraint to return 404 vs 403.
         project_exists = db.query(Project.id).filter(Project.id == project_id).first()
         if not project_exists:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
@@ -283,9 +391,25 @@ def get_chat_room(
     room_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
-):
-    """Get a specific chat room in a project if the user has access"""
-    # Verify project exists and user has access (using the same logic as get_project_chat_rooms)
+) -> ChatRoom:
+    """
+    Retrieve a single chat room by ID within a project.
+
+    The chat room is validated to belong to the specified project (preventing
+    cross-project access via URL manipulation).
+
+    Args:
+        project_id: Primary key of the parent project.
+        room_id: Primary key of the chat room.
+
+    Returns:
+        The ``ChatRoom`` object.
+
+    Raises:
+        HTTPException: 404 if the project or chat room does not exist in the
+            expected project scope.
+        HTTPException: 403 if the user is not assigned to the project.
+    """
     project_query = db.query(Project).filter(Project.id == project_id)
     if not current_user.is_admin:
         project_query = project_query.filter(Project.assignments.any(user_id=current_user.id))
@@ -318,9 +442,27 @@ def get_chat_messages(
     limit: int = 100,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
-):
-    """Get messages from a specific chat room if the user has access to the project"""
-    # Verify project exists and user has access (checks access to project first)
+) -> MessageList:
+    """
+    Return a paginated list of messages from a chat room.
+
+    Messages are ordered by their database ID (which preserves import order).
+    The ``total`` field in the response allows the client to implement
+    cursor-based pagination without an additional count request.
+
+    Args:
+        project_id: Primary key of the parent project.
+        room_id: Primary key of the chat room.
+        skip: Number of messages to skip (offset for pagination).
+        limit: Maximum number of messages to return per page.
+
+    Returns:
+        ``MessageList`` with ``messages`` and ``total`` fields.
+
+    Raises:
+        HTTPException: 404 if the project or chat room does not exist.
+        HTTPException: 403 if the user is not assigned to the project.
+    """
     project_query = db.query(Project).filter(Project.id == project_id)
     if not current_user.is_admin:
         project_query = project_query.filter(Project.assignments.any(user_id=current_user.id))
@@ -359,13 +501,32 @@ def get_chat_room_annotations(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
     _: None = Depends(verify_project_access)
-):
+) -> List[dict]:
     """
-    Get annotations for a specific chat room within a project.
-    PHASE 1 SECURITY: Annotators see only their own annotations, admins see all.
+    Return disentanglement annotations for a chat room.
+
+    **Annotation isolation (Pillar 1)**: regular annotators receive only their
+    own annotations so they cannot be influenced by peers' decisions.  Admins
+    receive all annotations for every annotator in the room.
+
+    The ``verify_project_access`` dependency enforces that the user is assigned
+    to the project before any annotation data is returned.
+
+    Args:
+        project_id: Primary key of the parent project.
+        room_id: Primary key of the chat room.
+
+    Returns:
+        A list of ``Annotation`` dicts (including ``annotator_username``,
+        which is joined from the ``users`` table).
+
+    Raises:
+        HTTPException: 404 if the chat room does not belong to this project.
+        HTTPException: 403 if the user is not assigned to the project
+            (raised by ``verify_project_access``).
     """
-    # Dependency takes care of project access.
-    # We still need to verify the chat room belongs to the project.
+    # verify_project_access already checked assignment; confirm the room is
+    # actually in this project to guard against cross-project path manipulation.
     chat_room = db.query(ChatRoom).filter(
         ChatRoom.id == room_id,
         ChatRoom.project_id == project_id
@@ -377,24 +538,23 @@ def get_chat_room_annotations(
             detail="Chat room not found in this project"
         )
 
-    # PILLAR 1: Isolate annotations based on user role
     if current_user.is_admin:
-        # Admins can see ALL annotations
         annotations_data = crud.get_all_annotations_for_chat_room_admin(db, chat_room_id=room_id)
     else:
-        # Annotators can ONLY see their own annotations
+        # Annotators can only see their own annotations.
         annotations_data = crud.get_annotations_for_chat_room_by_annotator(
             db, chat_room_id=room_id, annotator_id=current_user.id
         )
 
-    # Manually construct the response to match the schema
+    # The CRUD functions return (Annotation, annotator_username) tuples; merge
+    # the username into the dict representation expected by the response schema.
     result = []
     for annotation, annotator_username in annotations_data:
         annotation_dict = annotation.__dict__
         annotation_dict['annotator_username'] = annotator_username
         result.append(annotation_dict)
 
-    return result 
+    return result
 
 @router.get(
     "/{project_id}/chat-rooms/{room_id}/completion",
@@ -407,7 +567,24 @@ def get_chat_room_completion(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
     _: None = Depends(verify_project_access)
-):
+) -> ChatRoomCompletionSchema:
+    """
+    Return the current annotator's completion flag for a chat room.
+
+    If the annotator has never explicitly set a completion flag, a virtual
+    record with ``is_completed=False`` is returned rather than a 404, so the
+    client always receives a valid response shape.
+
+    Args:
+        project_id: Primary key of the parent project.
+        room_id: Primary key of the chat room.
+
+    Returns:
+        ``ChatRoomCompletion`` with the annotator's current flag value.
+
+    Raises:
+        HTTPException: 404 if the room does not belong to the project.
+    """
     chat_room = db.query(ChatRoom).filter(
         ChatRoom.id == room_id,
         ChatRoom.project_id == project_id
@@ -442,7 +619,24 @@ def update_chat_room_completion(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
     _: None = Depends(verify_project_access)
-):
+) -> ChatRoomCompletionSchema:
+    """
+    Set or clear the current annotator's completion flag for a chat room.
+
+    The underlying CRUD function performs an upsert: the row is created on the
+    first call and updated on subsequent calls, so this endpoint is idempotent.
+
+    Args:
+        project_id: Primary key of the parent project.
+        room_id: Primary key of the chat room.
+        payload: ``ChatRoomCompletionUpdate`` body with ``is_completed`` bool.
+
+    Returns:
+        The updated ``ChatRoomCompletion`` record.
+
+    Raises:
+        HTTPException: 404 if the room does not belong to the project.
+    """
     chat_room = db.query(ChatRoom).filter(
         ChatRoom.id == room_id,
         ChatRoom.project_id == project_id
@@ -474,7 +668,23 @@ def get_read_status(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
     _: None = Depends(verify_project_access)
-):
+) -> List[MessageReadStatusResponse]:
+    """
+    Return the current annotator's read/unread flags for all messages in a room.
+
+    Only messages that have been explicitly flagged are returned; messages with
+    no flag row are implicitly ``is_read=False`` on the client.
+
+    Args:
+        project_id: Primary key of the parent project.
+        room_id: Primary key of the chat room.
+
+    Returns:
+        List of ``MessageReadStatusResponse`` objects (one per flagged message).
+
+    Raises:
+        HTTPException: 404 if the chat room does not belong to the project.
+    """
     chat_room = db.query(ChatRoom).filter(
         ChatRoom.id == room_id,
         ChatRoom.project_id == project_id
@@ -500,7 +710,27 @@ def update_read_status(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
     _: None = Depends(verify_project_access)
-):
+) -> None:
+    """
+    Batch-update read/unread flags for multiple messages in a single request.
+
+    Each item in ``payload.statuses`` specifies a ``message_id`` and its new
+    ``is_read`` value.  The underlying CRUD function performs upserts, so
+    calling this endpoint is always safe regardless of whether a flag row
+    already exists.
+
+    Args:
+        project_id: Primary key of the parent project.
+        room_id: Primary key of the chat room.
+        payload: ``MessageReadStatusBatchUpdate`` body with a list of
+            ``{message_id, is_read}`` items.
+
+    Returns:
+        204 No Content on success.
+
+    Raises:
+        HTTPException: 404 if the chat room does not belong to the project.
+    """
     chat_room = db.query(ChatRoom).filter(
         ChatRoom.id == room_id,
         ChatRoom.project_id == project_id

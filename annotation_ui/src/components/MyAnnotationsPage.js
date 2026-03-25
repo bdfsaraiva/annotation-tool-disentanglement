@@ -1,3 +1,14 @@
+/**
+ * @fileoverview Read-only view of the current annotator's disentanglement annotations.
+ *
+ * Fetches all annotations the current user has made in the given project,
+ * groups them by chat room, and renders a collapsible card per room.
+ * A summary statistics bar shows total annotation count, number of rooms
+ * annotated, and number of distinct thread labels used.
+ *
+ * Cards start expanded by default so the annotator can immediately review
+ * their work; `toggleCardExpansion` collapses/expands individual rooms.
+ */
 import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { annotations } from '../utils/api';
@@ -5,6 +16,12 @@ import LoadingSpinner from './LoadingSpinner';
 import ErrorMessage from './ErrorMessage';
 import './MyAnnotationsPage.css';
 
+/**
+ * Personal annotation review page for disentanglement projects.
+ *
+ * Loads the current user's annotations grouped by chat room and displays them
+ * alongside summary statistics.
+ */
 const MyAnnotationsPage = () => {
     const { projectId } = useParams();
     const [myAnnotations, setMyAnnotations] = useState([]);
@@ -65,6 +82,10 @@ const MyAnnotationsPage = () => {
         fetchMyAnnotations();
     }, [projectId]);
 
+    /**
+     * Toggle the expanded/collapsed state of a chat room annotation card.
+     * @param {number|string} chatRoomId
+     */
     const toggleCardExpansion = (chatRoomId) => {
         setExpandedCards(prev => ({
             ...prev,

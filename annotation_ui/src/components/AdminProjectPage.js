@@ -1,3 +1,29 @@
+/**
+ * @fileoverview Admin project management page.
+ *
+ * Provides the full administrative interface for a single project, including:
+ *
+ * - **Project metadata**: inline description editing; relation-type management
+ *   with drag-to-reorder, add, remove, and alphabetic sort.
+ * - **User management**: assign annotators from the full user list; remove
+ *   them from the project with confirmation.
+ * - **Chat room import**: CSV upload with a preview (first 20 rows) before
+ *   committing.  Toast notifications report import success.
+ * - **Chat room list**: per-room IAA status badges (Complete / Partial /
+ *   NotEnoughData / Error); navigate to the admin chat-room view; rename or
+ *   delete with confirmation.
+ * - **Export**: disentanglement rooms export directly (with confirmation if
+ *   data is partial); adjacency-pairs rooms open an annotator-picker modal
+ *   to download per-annotator `.txt` or full-room `.zip` archives.
+ * - **IAA analytics**: fetched via `getChatRoomIAA` for each room on load;
+ *   stored in `chatRoomAnalytics` keyed by room ID.
+ *
+ * Destructive actions (delete project, delete chat room, remove user) all go
+ * through the shared `ConfirmationModal` to prevent accidental data loss.
+ * Errors from any async operation are surfaced via the `ErrorMessage`
+ * component at the top of the page and via the `warningMessage` router state
+ * passed from `AdminChatRoomView`.
+ */
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { projects as projectsApi, users as usersApi, annotations as annotationsApi, adjacencyPairs as adjacencyPairsApi } from '../utils/api';
@@ -7,6 +33,9 @@ import ConfirmationModal from './ConfirmationModal';
 import { useToast } from '../contexts/ToastContext';
 import './AdminProjectPage.css';
 
+/**
+ * Full admin management page for a single project.
+ */
 const AdminProjectPage = () => {
     const { projectId } = useParams();
     const navigate = useNavigate();
@@ -45,6 +74,13 @@ const AdminProjectPage = () => {
         type: 'danger', onConfirm: null
     });
 
+    /**
+     * Open the shared confirmation modal with a custom action callback.
+     * @param {string} title
+     * @param {string} message
+     * @param {Function} onConfirm - Async action to run when the user confirms.
+     * @param {{type?: string, confirmText?: string}} [options]
+     */
     const openConfirm = (title, message, onConfirm, { type = 'danger', confirmText = 'Confirm' } = {}) => {
         setConfirmModal({ open: true, title, message, confirmText, type, onConfirm });
     };
@@ -76,6 +112,14 @@ const AdminProjectPage = () => {
         }
     }, [projectId]);
 
+    /**
+     * Fetch IAA data for every chat room and populate `chatRoomAnalytics`.
+     *
+     * Errors per room are caught individually so a single failing room does not
+     * block the entire analytics load; failed rooms receive an `'Error'` status.
+     * @param {Object[]} rooms - Chat room list.
+     * @param {Object} projectData - Project record (used to select the IAA formula).
+     */
     const fetchChatRoomAnalytics = async (rooms, projectData) => {
         const analytics = {};
 
@@ -106,12 +150,24 @@ const AdminProjectPage = () => {
         setChatRoomAnalytics(analytics);
     };
 
+    /**
+     * Compute the mean accuracy across all pairwise annotator combinations for
+     * disentanglement projects.
+     * @param {Object[]} pairwiseAccuracies
+     * @returns {string|null} Fixed-1 decimal string, or `null` if no data.
+     */
     const calculateAverageAgreement = (pairwiseAccuracies) => {
         if (!pairwiseAccuracies || pairwiseAccuracies.length === 0) return null;
         const sum = pairwiseAccuracies.reduce((acc, pair) => acc + pair.accuracy, 0);
         return (sum / pairwiseAccuracies.length).toFixed(1);
     };
 
+    /**
+     * Compute the mean combined IAA across all pairwise combinations for
+     * adjacency-pairs projects.
+     * @param {Object[]} pairwiseAdjIAA - Each entry must have a `combined_iaa` field.
+     * @returns {string|null} Fixed-3 decimal string, or `null` if no data.
+     */
     const calculateAverageAdjIAA = (pairwiseAdjIAA) => {
         if (!pairwiseAdjIAA || pairwiseAdjIAA.length === 0) return null;
         const sum = pairwiseAdjIAA.reduce((acc, pair) => acc + pair.combined_iaa, 0);
@@ -216,6 +272,11 @@ const AdminProjectPage = () => {
         );
     };
 
+    /**
+     * Persist an updated `relation_types` array to the backend and sync local
+     * state.  Called after every add, remove, sort, or drag-reorder operation.
+     * @param {string[]} nextTypes
+     */
     const handleUpdateRelationTypes = async (nextTypes) => {
         if (!project) return;
         setIsUpdatingProject(true);
@@ -278,6 +339,18 @@ const AdminProjectPage = () => {
     };
 
     // ── Export ────────────────────────────────────────────────────────────────
+    /**
+     * Trigger export for a chat room.
+     *
+     * For adjacency-pairs projects, opens an annotator-picker modal.
+     * For disentanglement projects, exports directly but intercepts `'Partial'`
+     * and `'NotEnoughData'` statuses with confirmation modals before proceeding.
+     *
+     * @param {number} chatRoomId
+     * @param {string} chatRoomName
+     * @param {Object} analytics - IAA analytics record for this room (used for
+     *   status-gated confirmations).
+     */
     const handleExportChatRoom = async (chatRoomId, chatRoomName, analytics) => {
         setError(null);
 
@@ -312,6 +385,13 @@ const AdminProjectPage = () => {
         }
     };
 
+    /**
+     * Execute the adjacency-pairs export from the modal.
+     *
+     * When `exportAnnotatorId` is `'all'`, exports a `.zip` containing all
+     * annotators; otherwise exports a single annotator's `.txt` file.  The
+     * filename is derived from the room name and annotator username.
+     */
     const handleExportAdjacencyPairs = async () => {
         if (!exportModal.roomId) return;
         try {
@@ -333,11 +413,22 @@ const AdminProjectPage = () => {
     };
 
     // ── Chat room management ──────────────────────────────────────────────────
+    /**
+     * Remove a chat room from the local UI lists without a round-trip to the
+     * backend.  Used when navigation to a room reveals it no longer exists.
+     * @param {number} chatRoomId
+     */
     const removeChatRoomFromList = (chatRoomId) => {
         setChatRooms(prev => prev.filter(room => room.id !== chatRoomId));
         setChatRoomAnalytics(prev => { const updated = { ...prev }; delete updated[chatRoomId]; return updated; });
     };
 
+    /**
+     * Navigate to the admin chat-room view, first verifying the room still
+     * exists.  Removes the room from the local list and shows an error if the
+     * GET request fails (e.g., room was deleted externally).
+     * @param {number} chatRoomId
+     */
     const handleViewChatRoom = async (chatRoomId) => {
         try {
             await projectsApi.getChatRoom(projectId, chatRoomId);
@@ -387,6 +478,12 @@ const AdminProjectPage = () => {
     };
 
     // ── Status badge ──────────────────────────────────────────────────────────
+    /**
+     * Render a coloured status badge for a chat room's IAA analysis state.
+     * @param {string} status - One of: 'Completed', 'Started', 'NotStarted',
+     *   'Complete', 'Partial', 'NotEnoughData', 'Error', 'N/A'.
+     * @returns {React.ReactElement}
+     */
     const getStatusBadge = (status) => {
         const badges = {
             'Completed': { class: 'status-complete', text: 'Completed' },

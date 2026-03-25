@@ -1,5 +1,31 @@
+/**
+ * @fileoverview Read-only instructions panel shown in the chat-room sidebar.
+ *
+ * Renders task-specific annotation guidance and, for the disentanglement mode,
+ * a real-time progress bar derived from the `statistics` prop.  The panel
+ * branches on `annotationMode` to show either adjacency-pairs or
+ * disentanglement instructions without any shared wrapper duplication.
+ */
 import React from 'react';
 
+/**
+ * Displays contextual annotation instructions and (for disentanglement) live
+ * progress statistics in the chat-room sidebar.
+ *
+ * @param {Object} props
+ * @param {'disentanglement'|'adjacency_pairs'} props.annotationMode - Determines
+ *   which set of instructions is rendered.
+ * @param {Object} props.statistics - Annotation progress counters; only consumed
+ *   in `'disentanglement'` mode.
+ * @param {number} props.statistics.annotationPercentage - 0–100 value used to
+ *   set the progress-bar fill width.
+ * @param {number} props.statistics.annotatedMessages - Count of turns that have
+ *   at least one annotation.
+ * @param {number} props.statistics.totalMessages - Total number of turns in the
+ *   chat room.
+ * @param {number} props.statistics.unannotatedMessages - Turns still needing
+ *   annotation (`totalMessages - annotatedMessages`).
+ */
 const InstructionsPanel = ({ annotationMode, statistics }) => (
   <div className="instruction-panel">
     <div className="manual-content">
