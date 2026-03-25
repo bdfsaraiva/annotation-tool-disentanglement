@@ -79,7 +79,7 @@ Once at least two annotators have annotated the same rooms, you can compute pair
 
 1. Open the project and click the **IAA** (chart) icon next to a room.
 2. A pairwise matrix is displayed.
-   - **Disentanglement** — one-to-one (o2o) agreement: Hungarian-aligned macro-averaged F1 per thread pair.
+   - **Disentanglement** — macro-averaged F1 after optimal thread alignment.
    - **Adjacency pairs** — Combined IAA = LinkF1 × (α + (1 − α) × TypeAcc), where α weights the importance of relation-type agreement. Use the **Combined / Link F1 / Type Accuracy** toggle to inspect each sub-score independently.
 
 ![IAA Analysis](../screenshots/iaa_analysis.png)

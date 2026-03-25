@@ -27,7 +27,7 @@ Designed for computational linguistics research requiring rigorous inter-annotat
 | **Adjacency Pairs** | Draw directed relation links with typed labels via drag or right-click |
 | **CSV Import** | Import chat rooms from CSV with row-level preview and validation |
 | **JSON/ZIP Export** | Export annotations per room or per annotator |
-| **IAA Analysis** | Pairwise inter-annotator agreement using the Hungarian algorithm |
+| **IAA Analysis** | Pairwise inter-annotator agreement (thread-aligned F1 for disentanglement; LinkF1 × TypeAcc for adjacency pairs) |
 | **Admin Dashboard** | Full project, user, and chat-room lifecycle management |
 | **REST API** | OpenAPI/Swagger interface at `/docs` |
 
