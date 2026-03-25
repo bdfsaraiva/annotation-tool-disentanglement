@@ -36,13 +36,13 @@ Each annotator's links for each room are exported as a plain-text file, one dire
 **Output:** A ZIP archive containing one `.txt` file per annotator per room.
 
 ```
-T002 -> T001 [question-answer]
-T004 -> T001 [topic-shift]
+T002,T001,Question - Response
+T004,T001,Assessment - Agreement/Disagreement
 ```
 
-Format: `<from_turn_id> -> <to_turn_id> [<relation_type>]`
+Format: `<from_turn_id>,<to_turn_id>,<relation_type>` — one directed edge per line, no header row.
 
-This format is compatible with common corpus analysis workflows.
+This format is the same as the import format, so exported files can be re-imported directly.
 
 ---
 
@@ -53,6 +53,6 @@ The inter-annotator agreement matrix can be viewed in the **IAA** tab of the pro
 | Metric | Annotation type | Description |
 |---|---|---|
 | Macro-averaged F1 | Disentanglement | F1 per matched thread pair, averaged over all threads |
-| Cohen's κ | Adjacency pairs | Chance-corrected agreement over all possible directed edges |
+| LinkF1 × (α + (1−α) × TypeAcc) | Adjacency pairs | Structural agreement weighted with relation-type accuracy; α configurable per project |
 
-See [Architecture — IAA](../development/architecture.md#iaa-hungarian-algorithm) for the formal definitions.
+See [Architecture — IAA](../development/architecture.md#iaa--metrics) for the formal definitions.
