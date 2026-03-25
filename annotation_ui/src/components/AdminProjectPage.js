@@ -231,6 +231,10 @@ const AdminProjectPage = () => {
             setImportPreview(preview);
         } catch (err) {
             setPreviewError(err.message || 'Failed to preview CSV.');
+            // Reset the file input so the user can re-select the corrected file
+            // without triggering ERR_UPLOAD_FILE_CHANGED on the next attempt.
+            setSelectedFile(null);
+            document.getElementById('csv-file-input').value = '';
         } finally {
             setIsPreviewing(false);
         }
