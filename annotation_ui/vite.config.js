@@ -15,7 +15,7 @@ export default defineConfig(({ mode }) => {
     },
     // Expose API_URL at build time without requiring VITE_ prefix
     define: {
-      'import.meta.env.API_URL': JSON.stringify(env.API_URL || 'http://localhost:8000'),
+      'import.meta.env.API_URL': JSON.stringify(env.API_URL ?? 'http://localhost:8000'),
     },
     // Allow JSX syntax in .js files (project uses .js throughout)
     esbuild: {
