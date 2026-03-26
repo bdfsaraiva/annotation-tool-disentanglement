@@ -53,6 +53,6 @@ The inter-annotator agreement matrix can be viewed in the **IAA** tab of the pro
 | Metric | Annotation type | Description |
 |---|---|---|
 | Macro-averaged F1 | Disentanglement | F1 per matched thread pair, averaged over all threads |
-| LinkF1 × (α + (1−α) × TypeAcc) | Adjacency pairs | Structural agreement weighted with relation-type accuracy; α configurable per project |
+| α × LinkF1 + (1−α) × TypeAcc | Adjacency pairs | Linear interpolation between structural (LinkF1) and label (TypeAcc) agreement; α=1 → LinkF1, α=0 → TypeAcc; α configurable per project |
 
 See [Architecture — IAA](../development/architecture.md#iaa--metrics) for the formal definitions.

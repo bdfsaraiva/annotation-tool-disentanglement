@@ -120,7 +120,7 @@ Tracks which turns an annotator has reviewed. Stored server-side per annotator p
 | `GET` | `/api/v1/admin/projects/{project_id}/iaa` | Compute pairwise IAA matrix for all annotators |
 | `GET` | `/api/v1/admin/chat-rooms/{room_id}/read-status-summary` | Per-turn read-status summary across all annotators (admin only) |
 
-**IAA response** — pairwise matrix per annotator pair. For disentanglement: macro-averaged F1 after optimal thread alignment. For adjacency pairs: LinkF1, TypeAcc, and Combined IAA = LinkF1 × (α + (1 − α) × TypeAcc), where α is the project-level weight saved via `PUT /api/v1/admin/projects/{project_id}`.
+**IAA response** — pairwise matrix per annotator pair. For disentanglement: macro-averaged F1 after optimal thread alignment. For adjacency pairs: LinkF1, TypeAcc, and Combined IAA = α × LinkF1 + (1 − α) × TypeAcc, where α is the project-level weight saved via `PUT /api/v1/admin/projects/{project_id}`.
 
 The IAA α weight can be updated by sending `{ "iaa_alpha": 0.8 }` to `PUT /api/v1/admin/projects/{project_id}`.
 

@@ -49,7 +49,7 @@ The API under `/api/v1/` is split into five routers:
 - **Admin** — CRUD for users and projects; CSV parsing and bulk import; JSON/ZIP export; per-turn annotator status for admin room view.
 - **Projects** — annotator-facing room listing, per-turn read-status sync for adjacency-pair rooms.
 - **Annotation** — read/write for disentanglement threads and adjacency pairs; room completion.
-- **IAA** — on-demand pairwise agreement computation (Hungarian F1 for disentanglement; LinkF1 × TypeAcc with configurable α for adjacency pairs).
+- **IAA** — on-demand pairwise agreement computation (Hungarian F1 for disentanglement; α × LinkF1 + (1−α) × TypeAcc with configurable α for adjacency pairs).
 
 ### Data Layer
 
@@ -89,17 +89,17 @@ LACE implements o2o agreement as follows:
 
 > **Note — variant vs. Elsner & Charniak (2010).** The classic o2o formulation used per-message accuracy as the base metric inside the cost matrix. LACE uses per-thread F1 instead, which is a more modern and more informative variant: it rewards partial overlap between matched thread pairs rather than requiring exact message-level agreement.
 
-### Adjacency Pairs — Combined IAA (LinkF1 × TypeAcc)
+### Adjacency Pairs — Combined IAA (α × LinkF1 + (1−α) × TypeAcc)
 
 For adjacency-pair projects the metric combines structural agreement (whether the same links exist) with label agreement (whether the same relation type was chosen):
 
 ```
-IAA = LinkF1 × (α + (1 − α) × TypeAcc)
+IAA = α × LinkF1 + (1 − α) × TypeAcc
 ```
 
 - **LinkF1** — F1 score over the set of directed edges, ignoring relation type.
 - **TypeAcc** — proportion of agreed edges where both annotators chose the same relation type.
-- **α** — configurable weight (0–1, default 0.8) stored per project; higher values down-weight type disagreements.
+- **α** — configurable weight (0–1, default 0.8) stored per project; α=1 → Combined = LinkF1; α=0 → Combined = TypeAcc.
 
 The three sub-scores (LinkF1, TypeAcc, Combined) are displayed independently in the IAA matrix viewer, and α can be adjusted and re-saved from the analysis page without re-running annotation.
 
